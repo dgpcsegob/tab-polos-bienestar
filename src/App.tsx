@@ -37,14 +37,14 @@ const App: React.FC = () => {
     {
       title: 'Zona 1 - NORTE',
       items: [
-        { id: 'ofrep_zona1', label: 'Oficinas de Representación INPI cambiar capa', color: '#a57f2c', shape: 'circle', switch: true, checked: layersVisibility['ofrep_zona1'] },
+        { id: 'ofrep_zona1', label: 'Oficinas de Representación INPI', color: '#a57f2c', shape: 'circle', switch: true, checked: layersVisibility['ofrep_zona1'] },
         { id: 'regiones_zona1', label: 'Regiones de Paz', color: '#66c2a5', shape: 'square', switch: true, checked: layersVisibility['regiones_zona1'] },
       ],
     },
     {
       title: 'Zona 2 - SUR',
       items: [
-        { id:'ofrep_zona2', label: 'Oficinas de Representación INPI cambiar capa', color: '#a57f2c', shape: 'circle', switch: true, checked: layersVisibility['ofrep_zona2'] },
+        { id:'ofrep_zona2', label: 'Oficinas de Representación INPI', color: '#a57f2c', shape: 'circle', switch: true, checked: layersVisibility['ofrep_zona2'] },
         { id: 'regiones_zona2', label: 'Regiones de Paz', color: '#fc8d62', shape: 'square', switch: true, checked: layersVisibility['regiones_zona2'] },
       ],
     },
