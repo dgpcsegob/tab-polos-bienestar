@@ -5,17 +5,13 @@ import './App.css';
 
 const App: React.FC = () => {
   const [layersVisibility, setLayersVisibility] = useState<Record<string, boolean>>({
-    puntos_zona1: true,
-    puntos_zona2: true,
-    mesas_cercanas_zona1: false,
-    mesas_cercanas_zona2: false,
+    polosBienestar: true,
+    ofrep_zona1: false,
+    ofrep_zona2: false,
     regiones_zona1: false,
     regiones_zona2: false,
-    LocalidadesSedeINPI: true,
+    LocalidadesSedeINPI: false,
     PresidenciasMunicipales: false,
-    PuntosWiFiCFE_4G: false,
-    PuntosWiFiCFE_FIBRA: false,
-    PuntosWiFiCFE_SATELITAL: false,
   });
 
   const handleToggle = (id: string) => {
@@ -27,39 +23,36 @@ const App: React.FC = () => {
 
   const sections: InfoBoxSection[] = [
     {
-      title: 'Zona 1',
+      title: 'Polos',
       items: [
-        { id: 'puntos_zona1', label: 'Asambleas Regionales Zona 1', color: '#e60026', shape: 'circle', switch: true, checked: layersVisibility['puntos_zona1'] },
-        { id: 'mesas_cercanas_zona1', label: 'Mesas de Paz Zona 1', color: '#f8e71c', shape: 'square', switch: true, checked: layersVisibility['mesas_cercanas_zona1'] },
-        { id: 'regiones_zona1', label: 'Regiones Zona 1', color: '#66c2a5', shape: 'square', switch: true, checked: layersVisibility['regiones_zona1'] },
+        { id: 'polosBienestar', label: 'Polos de Desarrollo para el BIENESTAR', color: '#9b2247', shape: 'circle', switch: false, checked: layersVisibility['polosBienestar'] },
       ],
     },
     {
-      title: 'Zona 2',
+    title: 'Comunidades Indígenas y Afromexicanas',
+    items: [
+      { id: 'LocalidadesSedeINPI', label: 'Pueblos Indígenas', color: '#666666', shape: 'circle', switch: true, checked: layersVisibility['LocalidadesSedeINPI'] },
+    ],
+     },
+    {
+      title: 'Zona 1 - NORTE',
       items: [
-        { id: 'puntos_zona2', label: 'Asambleas Regionales Zona 2', color: '#e60026', shape: 'circle', switch: true, checked: layersVisibility['puntos_zona2'] },
-        { id: 'mesas_cercanas_zona2', label: 'Mesas de Paz Zona 2', color: '#f8e71c', shape: 'square', switch: true, checked: layersVisibility['mesas_cercanas_zona2'] },
-        { id: 'regiones_zona2', label: 'Regiones Zona 2', color: '#fc8d62', shape: 'square', switch: true, checked: layersVisibility['regiones_zona2'] },
+        { id: 'ofrep_zona1', label: 'Oficinas de Representación INPI cambiar capa', color: '#a57f2c', shape: 'circle', switch: true, checked: layersVisibility['ofrep_zona1'] },
+        { id: 'regiones_zona1', label: 'Regiones de Paz', color: '#66c2a5', shape: 'square', switch: true, checked: layersVisibility['regiones_zona1'] },
       ],
     },
     {
-      title: 'Comunidades Indígenas y Afromexicanas',
+      title: 'Zona 2 - SUR',
       items: [
-        { id: 'LocalidadesSedeINPI', label: 'Pueblos Indígenas', color: '#666666', shape: 'circle', switch: true, checked: layersVisibility['LocalidadesSedeINPI'] },
+        { id:'ofrep_zona2', label: 'Oficinas de Representación INPI cambiar capa', color: '#a57f2c', shape: 'circle', switch: true, checked: layersVisibility['ofrep_zona2'] },
+        { id: 'regiones_zona2', label: 'Regiones de Paz', color: '#fc8d62', shape: 'square', switch: true, checked: layersVisibility['regiones_zona2'] },
       ],
     },
+
     {
       title: 'Presidencias Municipales',
       items: [
         { id: 'PresidenciasMunicipales', label: 'Cabeceras Municipales', color: '#000000', shape: 'circle', switch: true, checked: layersVisibility['PresidenciasMunicipales'] },
-      ],
-    },
-    {
-      title: 'Despliegue WiFi CFE',
-      items: [
-        { id: 'PuntosWiFiCFE_4G', label: '4G', color: '#9f2241', shape: 'circle', switch: true, checked: layersVisibility['PuntosWiFiCFE_4G'] },
-        { id: 'PuntosWiFiCFE_FIBRA', label: 'Fibra o Cobre', color: '#cda578', shape: 'circle', switch: true, checked: layersVisibility['PuntosWiFiCFE_FIBRA'] },
-        { id: 'PuntosWiFiCFE_SATELITAL', label: 'Satelital', color: '#235b4e', shape: 'circle', switch: true, checked: layersVisibility['PuntosWiFiCFE_SATELITAL'] },
       ],
     },
   ];
@@ -67,8 +60,7 @@ const App: React.FC = () => {
   return (
     <div className="App">
       <InfoBox
-        title="Mapa de Asambleas Regionales de Consulta"
-        subtitle="Capas disponibles por zona"
+        title="Polos de Desarrollo del BIENESTAR"
         sections={sections}
         onToggle={handleToggle}
       />
