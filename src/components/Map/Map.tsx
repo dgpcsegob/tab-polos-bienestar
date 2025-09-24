@@ -579,7 +579,7 @@ const attachAllTooltipEvents = useCallback((map: MaplibreMap) => {
         type: 'circle',
         source: 'polosBienestar_centroides',
         'source-layer': 'centroides_polos7_tile', // cambia si tu layer interno difiere
-        maxzoom: 10.99, // oculto desde 11
+        maxzoom: 11, // oculto desde 11
         paint: {
           'circle-radius': 10,
           'circle-color': '#9b2247',
@@ -594,7 +594,7 @@ const attachAllTooltipEvents = useCallback((map: MaplibreMap) => {
         type: 'circle',
         source: 'polosBienestar_centroides',
         'source-layer': 'centroides_polos7_tile', // cambia si tu layer interno difiere
-        maxzoom: 10.99, // oculto desde 11
+        maxzoom: 11, // oculto desde 11
         paint: {
           'circle-radius': 4,
           'circle-color': '#9b2247',
