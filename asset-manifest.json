@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/tab-polos-bienestar/static/css/main.fbc34664.css",
-    "main.js": "/tab-polos-bienestar/static/js/main.861b8d03.js",
-    "static/js/453.855ef8ee.chunk.js": "/tab-polos-bienestar/static/js/453.855ef8ee.chunk.js",
-    "index.html": "/tab-polos-bienestar/index.html",
-    "main.fbc34664.css.map": "/tab-polos-bienestar/static/css/main.fbc34664.css.map",
-    "main.861b8d03.js.map": "/tab-polos-bienestar/static/js/main.861b8d03.js.map",
-    "453.855ef8ee.chunk.js.map": "/tab-polos-bienestar/static/js/453.855ef8ee.chunk.js.map"
+    "main.css": "/tab-mun-prioritarios/static/css/main.8a6aecbb.css",
+    "main.js": "/tab-mun-prioritarios/static/js/main.cecb84ae.js",
+    "static/js/453.4165bc5e.chunk.js": "/tab-mun-prioritarios/static/js/453.4165bc5e.chunk.js",
+    "index.html": "/tab-mun-prioritarios/index.html",
+    "main.8a6aecbb.css.map": "/tab-mun-prioritarios/static/css/main.8a6aecbb.css.map",
+    "main.cecb84ae.js.map": "/tab-mun-prioritarios/static/js/main.cecb84ae.js.map",
+    "453.4165bc5e.chunk.js.map": "/tab-mun-prioritarios/static/js/453.4165bc5e.chunk.js.map"
   },
   "entrypoints": [
-    "static/css/main.fbc34664.css",
-    "static/js/main.861b8d03.js"
+    "static/css/main.8a6aecbb.css",
+    "static/js/main.cecb84ae.js"
   ]
 }
