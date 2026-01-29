@@ -117,7 +117,7 @@
   left: 20px;
   width: 200px;
   height: 150px;
-  border: 2px solid #007cbf;
+  border: 2px solid #9f2247;
   border-radius: 8px;
   overflow: hidden;
   box-shadow: 0 4px 8px rgba(0,0,0,0.2);
@@ -126,17 +126,77 @@
 
 /* Estilos para el popup por defecto de MapLibre que usamos para los tooltips */
 .maplibregl-popup {
-    z-index: 20 !important; /* Asegura que esté por encima de otros elementos */
+  z-index: 20 !important;
 }
 
 .maplibregl-popup-content {
-  background-color: white;
-  padding: 10px 15px;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  font-family: 'Montserrat', sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(248, 250, 252, 0.95) 100%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 8px 12px;
+  border-radius: 8px;
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.08),
+    0 2px 4px rgba(0, 0, 0, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #374151;
+  max-width: 280px;
+}
+
+.maplibregl-popup-content strong {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.maplibregl-popup-tip {
+  border-top-color: rgba(255, 255, 255, 0.95) !important;
+}
+
+/* Contenedor del InfoBox en el split view */
+.split-infobox-container {
+  position: absolute;
+  top: 10px;
+  left: 0;
+  z-index: 25;
+  max-width: 280px;
+  overflow: visible;
+}
+
+/* Sobreescribir position: fixed del InfoBox para que funcione dentro del split view */
+.split-infobox-container .info-box {
+  position: absolute !important;
+  top: 0 !important;
+  left: 10px !important;
+  width: 260px !important;
+  max-height: calc(100vh - 100px);
+  transform-origin: left center;
+  transform: translateX(0);
+  transition:
+    transform .4s cubic-bezier(.22,.85,.25,1),
+    opacity .3s ease;
+}
+
+.split-infobox-container .info-box.closed {
+  transform: translateX(calc(-100% - 20px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Botón flotante dentro del split view - aparece desde el borde del divisor */
+.split-infobox-container .floating-reveal-btn {
+  position: absolute !important;
+  top: 15px !important;
+  left: 5px !important;
+  transform-origin: left center;
+  transition: transform .3s ease, opacity .3s ease;
+}
+
+.split-infobox-container .floating-reveal-btn:hover {
+  transform: translateX(3px);
 }
 
 @keyframes pulse {
