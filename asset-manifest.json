@@ -1,15 +1,15 @@
 {
   "files": {
     "main.css": "/tab-polos-bienestar/static/css/main.ccd4c1bb.css",
-    "main.js": "/tab-polos-bienestar/static/js/main.bd0397d8.js",
+    "main.js": "/tab-polos-bienestar/static/js/main.f5159e57.js",
     "static/js/453.855ef8ee.chunk.js": "/tab-polos-bienestar/static/js/453.855ef8ee.chunk.js",
     "index.html": "/tab-polos-bienestar/index.html",
     "main.ccd4c1bb.css.map": "/tab-polos-bienestar/static/css/main.ccd4c1bb.css.map",
-    "main.bd0397d8.js.map": "/tab-polos-bienestar/static/js/main.bd0397d8.js.map",
+    "main.f5159e57.js.map": "/tab-polos-bienestar/static/js/main.f5159e57.js.map",
     "453.855ef8ee.chunk.js.map": "/tab-polos-bienestar/static/js/453.855ef8ee.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.ccd4c1bb.css",
-    "static/js/main.bd0397d8.js"
+    "static/js/main.f5159e57.js"
   ]
 }
