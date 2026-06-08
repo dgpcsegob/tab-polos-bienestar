@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+﻿import React, { useEffect, useRef, useState, useCallback } from "react";
 import maplibregl, {
   LngLat,
   LngLatLike,
@@ -56,22 +56,13 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
     }),
   );
 
-  // === Hover “ultra-suave” ===
+  // === Hover refs ===
   const layerHandlersRef = useRef<
     Record<string, { mouseenter: any; mousemove: any; mouseleave: any }>
   >({});
-  const rafMoveRef = useRef<number | null>(null);
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const lastLngLatRef = useRef<maplibregl.LngLat | null>(null);
   const lastHoverIdRef = useRef<string | number | null>(null);
-  const moveDebounceRef = useRef<number | null>(null);
-  const lastFrameTsRef = useRef<number | null>(null);
-  const slowFrameStreakRef = useRef(0);
-
-  const PIXEL_MOVE_THRESHOLD = 3;
-  const MOVE_DEBOUNCE_MS = 8;
-  const SLOW_FRAME_MS = 80;
-  const SLOW_STREAK_LIMIT = 2;
 
   // === Brújula ===
   const [displayBearing, setDisplayBearing] = useState(0);
@@ -79,7 +70,7 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const compassAnimId = useRef<number | null>(null);
 
   const apiKey = "QAha5pFBxf4hGa8Jk5zv";
-  const baseStyleUrl = "https://www.mapabase.atdt.gob.mx/style.json";
+  const baseStyleUrl = "https://www.mapabase.atdt.gob.mx/style_white_3d_places.json";
   const base3DStyleUrl = `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${apiKey}`;
   const satelliteStyleUrl = `https://api.maptiler.com/maps/satellite/style.json?key=${apiKey}`;
   const minimapStyleUrl = `https://api.maptiler.com/maps/dataviz-light/style.json?key=${apiKey}`;
@@ -112,12 +103,39 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const [currentLinePoints, setCurrentLinePoints] = useState<LngLatLike[]>([]);
   const [routesData, setRoutesData] = useState<RouteData[]>([]);
   const [linesData, setLinesData] = useState<RouteData[]>([]);
-  const [mapView, setMapView] = useState<number>(0);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [mapView, setMapView] = useState<number>(0); // Solo setMapView se usa para forzar re-renders
 
   const isMeasuringRef = useRef(isMeasuring);
   const isMeasuringLineRef = useRef(isMeasuringLine);
   isMeasuringRef.current = isMeasuring;
   isMeasuringLineRef.current = isMeasuringLine;
+
+const fixEncoding = (text: any): string => {
+  if (text === null || text === undefined) return "";
+  if (typeof text !== "string") return String(text);
+  if (!text) return text;
+
+  // 1. Si hay �, forzamos cambiar por í (como pediste)
+  if (text.includes("�")) {
+    text = text.replace(/\uFFFD/g, "í");
+  }
+
+  // 2. Reemplazar patrones típicos de UTF‑8 mal decodificado como Latin‑1
+  // Ejemplos frecuentes en tiles:
+  text = text
+    .replace(/Ã³/g, "ó")
+    .replace(/Ã©/g, "é")
+    .replace(/Ã¡/g, "á")
+    .replace(/Ãº/g, "ú")
+    .replace(/Ã¼/g, "ü")
+    .replace(/Ã±/g, "ñ")
+    .replace(/ÃÂ³/g, "ó") // por si viene doble
+    .replace(/ÃÂ¡/g, "á")
+    .replace(/ÃÂº/g, "ú");
+
+  return text;
+};
 
   const clearCurrentPoints = useCallback(() => {
     const map = mapRef.current;
@@ -473,9 +491,9 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
     ensureLayerHover(
       "polosBienestar",
       (props) =>
-        `<strong>PODEBIS:</strong> ${props.layer ?? props.podebis ?? ""}<br/>
-     <strong>Entidad:</strong> ${props.entidad ?? props.NOM_ENT ?? ""}<br/>
-     <strong>Publicación:</strong> ${props.estatus ?? ""}`,
+        `<strong>PODEBIS:</strong> ${(props.layer ?? props.podebis)}<br/>
+     <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT)}<br/>
+     <strong>Publicación:</strong> ${(props.estatus)}`,
     );
 
     // Si usas centroides con tooltip:
@@ -484,10 +502,97 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         ensureLayerHover(
           layerId,
           (props) =>
-            `<strong>PODEBIS:</strong> ${props.layer ?? props.podebis ?? ""}<br/>
-         <strong>Entidad:</strong> ${props.entidad ?? props.NOM_ENT ?? ""}<br/>
-         <strong>Publicación:</strong> ${props.estatus ?? ""}`,
+            `<strong>PODEBIS:</strong> ${(props.layer ?? props.podebis)}<br/>
+         <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT)}<br/>
+         <strong>Publicación:</strong> ${(props.estatus)}`,
         );
+      }
+    });
+
+    ensureLayerHover(
+      "SJC_Pue",
+      (props) =>
+        `<strong>PODEBIS:</strong> ${(props.layer ?? props.podebis) || "San José Chiapa"}<br/>
+     <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT) || "Puebla"}<br/>
+     <strong>Publicación:</strong> ${(props.estatus)}`,
+    );
+
+    ["SJC_centroides", "SJC_centroides-pulse"].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        ensureLayerHover(
+          layerId,
+          (props) =>
+            `<strong>PODEBIS:</strong> ${fixEncoding(props.layer)}<br/>
+         <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT) || "Puebla"}<br/>
+         <strong>Publicación:</strong> ${(props.estatus) || ""}`,
+        );
+      }
+    });
+
+    ensureLayerHover(
+      "polos_topo",
+      (props) =>
+        `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBI) || "PODEBI Topolobampo 1"}<br/>
+     <strong>Entidad:</strong> ${fixEncoding(props.Entidad ?? props.entidad) || "Sinaloa"}<br/>
+     <strong>Publicación:</strong> ${fixEncoding(props.Publicacion) || "20 de marzo de 2020"}`,
+    );
+
+    ["cent_polos_topo", "cent_polos_topo-pulse"].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        ensureLayerHover(
+          layerId,
+          (props) =>
+            `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBI) || "PODEBI Topolobampo 1"}<br/>
+         <strong>Entidad:</strong> ${fixEncoding(props.Entidad ?? props.entidad) || "Sinaloa"}<br/>
+         <strong>Publicación:</strong> ${fixEncoding(props.Publicacion) || "20 de marzo de 2020"}`,
+        );
+      }
+    });
+
+    ensureLayerHover(
+      "podebis_Tab_Oax_Tlaxc",
+      (props) =>
+        `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBI) || ""}<br/>
+     <strong>Entidad:</strong> ${fixEncoding(props.CVE_ENT) || ""}<br/>
+     <strong>Publicación:</strong> ${fixEncoding(props.estatus) || ""}`,
+    );
+
+    ["cent_podebis_Tab_Oax_Tlaxc", "cent_podebis_Tab_Oax_Tlaxc-pulse"].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        ensureLayerHover(
+          layerId,
+          (props) =>
+            `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBIS) || ""}<br/>
+         <strong>Entidad:</strong> ${fixEncoding(props.NOM_ENT) || ""}<br/>
+         <strong>Publicación:</strong> ${fixEncoding(props.estatus) || ""}`,
+        );
+      }
+    });
+
+    // === Click en centroide → zoom al polígono correspondiente ===
+    const zoomToCentroid = (
+      e: maplibregl.MapMouseEvent & { features?: any[] },
+    ) => {
+      if (isMeasuringRef.current || isMeasuringLineRef.current) return;
+      if (!e.features?.length) return;
+      const geom = e.features[0].geometry as any;
+      const coords: [number, number] = geom.coordinates;
+      map.flyTo({ center: coords, zoom: 13, duration: 1200 });
+    };
+
+    [
+      "polosCentroides",
+      "polosCentroides-pulse",
+      "SJC_centroides",
+      "SJC_centroides-pulse",
+      "cent_polos_topo",
+      "cent_polos_topo-pulse",
+      "cent_podebis_Tab_Oax_Tlaxc",
+      "cent_podebis_Tab_Oax_Tlaxc-pulse",
+    ].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.off("click", layerId, zoomToCentroid);
+        map.on("click", layerId, zoomToCentroid);
       }
     });
   }, []);
@@ -543,31 +648,20 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
       if (!map) return;
       const [startPoint, endPoint] = points.map((p) => LngLat.convert(p));
 
-      const calculateDistance = (
-        lat1: number,
-        lon1: number,
-        lat2: number,
-        lon2: number,
-      ) => {
-        const R = 6371;
-        const dLat = ((lat2 - lat1) * Math.PI) / 180;
-        const dLon = ((lat2 - lon1) * Math.PI) / 180;
-        const a =
-          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-          Math.cos((lat1 * Math.PI) / 180) *
-            Math.cos((lat2 * Math.PI) / 180) *
-            Math.sin(dLon / 2) *
-            Math.sin(dLon / 2);
-        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        return R * c;
-      };
+      console.log("[linea] startPoint:", startPoint.lat, startPoint.lng);
+      console.log("[linea] endPoint:", endPoint.lat, endPoint.lng);
 
-      const distanceKm = calculateDistance(
-        startPoint.lat,
-        startPoint.lng,
-        endPoint.lat,
-        endPoint.lng,
-      );
+      const toRad = (deg: number) => (deg * Math.PI) / 180;
+      const R = 6371; // km
+      const φ1 = toRad(startPoint.lat);
+      const φ2 = toRad(endPoint.lat);
+      const Δφ = toRad(endPoint.lat - startPoint.lat);
+      const Δλ = toRad(endPoint.lng - startPoint.lng);
+      const a =
+        Math.sin(Δφ / 2) ** 2 +
+        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
+      const distanceKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      console.log("[linea] φ1:", φ1, "φ2:", φ2, "Δφ:", Δφ, "Δλ:", Δλ, "a:", a, "dist:", distanceKm);
       const distance = distanceKm.toFixed(2);
 
       const newLineData: RouteData = {
@@ -782,6 +876,186 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         },
       });
     }
+
+    // === Polígono San José Chiapa, Pue. (≥ 11) ===
+    if (!map.getSource("SJC_Pue")) {
+      map.addSource("SJC_Pue", {
+        type: "vector",
+        url: "pmtiles://data/poligonos_SJC_Pue.pmtiles",
+      });
+    }
+    if (!map.getLayer("SJC_Pue")) {
+      map.addLayer({
+        id: "SJC_Pue",
+        type: "fill",
+        source: "SJC_Pue",
+        "source-layer": "poligonos",
+        minzoom: 11,
+        paint: {
+          "fill-color": "rgba(155, 34, 71, 0.7)",
+          "fill-outline-color": "#ffffff",
+        },
+      });
+    }
+
+    // === CENTROIDES SJC (< 11) ===
+    if (!map.getSource("SJC_centroides")) {
+      map.addSource("SJC_centroides", {
+        type: "vector",
+        url: "pmtiles://data/centroides_SJC.pmtiles",
+      });
+    }
+    // Pulso
+    if (!map.getLayer("SJC_centroides-pulse")) {
+      map.addLayer({
+        id: "SJC_centroides-pulse",
+        type: "circle",
+        source: "SJC_centroides",
+        "source-layer": "poligonos",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#9b2247",
+          "circle-opacity": 0.0,
+        },
+      });
+    }
+    // Punto base
+    if (!map.getLayer("SJC_centroides")) {
+      map.addLayer({
+        id: "SJC_centroides",
+        type: "circle",
+        source: "SJC_centroides",
+        "source-layer": "poligonos",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#9b2247",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1,
+        },
+      });
+    }
+
+        // === Polígono Topolobampo, Sin ===
+    if (!map.getSource("polos_topo")) {
+      map.addSource("polos_topo", {
+        type: "vector",
+        url: "pmtiles://data/polos_topo.pmtiles",
+      });
+    }
+    if (!map.getLayer("polos_topo")) {
+      map.addLayer({
+        id: "polos_topo",
+        type: "fill",
+        source: "polos_topo",
+        "source-layer": "polos_topo_tile",
+        minzoom: 11,
+        paint: {
+          "fill-color": "rgba(155, 34, 71, 0.7)",
+          "fill-outline-color": "#ffffff",
+        },
+      });
+    }
+
+    // === Centroides Topolobampo  ===
+    if (!map.getSource("cent_polos_topo")) {
+      map.addSource("cent_polos_topo", {
+        type: "vector",
+        url: "pmtiles://data/cent_polos_topo.pmtiles",
+      });
+    }
+    // Pulso
+    if (!map.getLayer("cent_polos_topo-pulse")) {
+      map.addLayer({
+        id: "cent_polos_topo-pulse",
+        type: "circle",
+        source: "cent_polos_topo",
+        "source-layer": "cent_polos_topo_tile",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#9b2247",
+          "circle-opacity": 0.0,
+        },
+      });
+    }
+    // Punto base
+    if (!map.getLayer("cent_polos_topo")) {
+      map.addLayer({
+        id: "cent_polos_topo",
+        type: "circle",
+        source: "cent_polos_topo",
+        "source-layer": "cent_polos_topo_tile",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#9b2247",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1,
+        },
+      });
+    }
+
+    // === Polígono PODEBIS Tab/Oax/Tlaxc (≥ 11) ===
+    if (!map.getSource("podebis_Tab_Oax_Tlaxc")) {
+      map.addSource("podebis_Tab_Oax_Tlaxc", {
+        type: "vector",
+        url: "pmtiles://data/podebis_Tab_Oax_Tlaxc.pmtiles",
+      });
+    }
+    if (!map.getLayer("podebis_Tab_Oax_Tlaxc")) {
+      map.addLayer({
+        id: "podebis_Tab_Oax_Tlaxc",
+        type: "fill",
+        source: "podebis_Tab_Oax_Tlaxc",
+        "source-layer": "podebis_Tab_Oax_Tlaxc_tile",
+        minzoom: 11,
+        paint: {
+          "fill-color": "rgba(155, 34, 71, 0.7)",
+          "fill-outline-color": "#ffffff",
+        },
+      });
+    }
+
+    // === Centroides PODEBIS Tab/Oax/Tlaxc (< 11) ===
+    if (!map.getSource("cent_podebis_Tab_Oax_Tlaxc")) {
+      map.addSource("cent_podebis_Tab_Oax_Tlaxc", {
+        type: "vector",
+        url: "pmtiles://data/cent_podebis_Tab_Oax_Tlaxc.pmtiles",
+      });
+    }
+    // Pulso
+    if (!map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+      map.addLayer({
+        id: "cent_podebis_Tab_Oax_Tlaxc-pulse",
+        type: "circle",
+        source: "cent_podebis_Tab_Oax_Tlaxc",
+        "source-layer": "cent_podebis_Tab_Oax_Tlaxc_tile",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#9b2247",
+          "circle-opacity": 0.0,
+        },
+      });
+    }
+    // Punto base
+    if (!map.getLayer("cent_podebis_Tab_Oax_Tlaxc")) {
+      map.addLayer({
+        id: "cent_podebis_Tab_Oax_Tlaxc",
+        type: "circle",
+        source: "cent_podebis_Tab_Oax_Tlaxc",
+        "source-layer": "cent_podebis_Tab_Oax_Tlaxc_tile",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#9b2247",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1,
+        },
+      });
+    }
   };
 
   const updateLayerVisibility = useCallback(
@@ -794,7 +1068,10 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
           }
         } catch {}
         if (id === "polosBienestar") {
-          ["polosCentroides", "polosCentroides-pulse"].forEach((cid) => {
+          [
+            "polosCentroides", "polosCentroides-pulse",
+            "SJC_Pue", "SJC_centroides", "SJC_centroides-pulse",
+          ].forEach((cid) => {
             if (map.getLayer(cid)) {
               map.setLayoutProperty(cid, "visibility", vis);
             }
@@ -963,6 +1240,18 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
               pulseOpacity * 0.5,
             );
           }
+          if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+            map.setPaintProperty(
+              "cent_podebis_Tab_Oax_Tlaxc-pulse",
+              "circle-radius",
+              pulseRadius,
+            );
+            map.setPaintProperty(
+              "cent_podebis_Tab_Oax_Tlaxc-pulse",
+              "circle-opacity",
+              pulseOpacity * 0.5,
+            );
+          }
           blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
         };
         animateComindPulse(0);
@@ -1047,7 +1336,7 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
     }
 
     const mexicoBounds: [LngLatLike, LngLatLike] = [
-      [-120, 14],
+      [-102, 14],
       [-84, 33.5],
     ];
 
@@ -1102,6 +1391,15 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         "polosBienestar",
         "polosCentroides",
         "polosCentroides-pulse",
+        "SJC_Pue",
+        "SJC_centroides",
+        "SJC_centroides-pulse",
+        "polos_topo",
+        "cent_polos_topo",
+        "cent_polos_topo-pulse",
+        "podebis_Tab_Oax_Tlaxc",
+        "cent_podebis_Tab_Oax_Tlaxc",
+        "cent_podebis_Tab_Oax_Tlaxc-pulse",
       ];
       asambleasRegionalesLayers.forEach((layerId) => {
         if (splitMap.getLayer(layerId)) {
@@ -1158,6 +1456,43 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
           );
           splitMap.setPaintProperty(
             "polosCentroides-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+        if (splitMap.getLayer("SJC_centroides-pulse")) {
+          splitMap.setPaintProperty(
+            "SJC_centroides-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          splitMap.setPaintProperty(
+            "SJC_centroides-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+
+        if (splitMap.getLayer("cent_polos_topo-pulse")) {
+          splitMap.setPaintProperty(
+            "cent_polos_topo-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          splitMap.setPaintProperty(
+            "cent_polos_topo-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+        if (splitMap.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+          splitMap.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          splitMap.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
             "circle-opacity",
             pulseOpacity * 0.5,
           );
@@ -1284,7 +1619,16 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         }
       }
     });
-  }, [isSatellite, is3D, layersVisibility, apiKey, attachAllTooltipEvents]);
+  }, [
+    isSatellite,
+    is3D,
+    layersVisibility,
+    apiKey,
+    attachAllTooltipEvents,
+    base3DStyleUrl,
+    minimapStyleUrl,
+    satelliteStyleUrl,
+  ]);
 
   const destroySplitMap = useCallback(() => {
     if (splitBlinkAnimationId.current) {
@@ -1437,6 +1781,18 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
             pulseOpacity * 0.5,
           );
         }
+        if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+          map.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
 
         blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
       };
@@ -1537,7 +1893,10 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         const vis = visible ? "visible" : "none";
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
         if (id === "polosBienestar") {
-          ["polosCentroides", "polosCentroides-pulse"].forEach((cid) => {
+          [
+            "polosCentroides", "polosCentroides-pulse",
+            "SJC_Pue", "SJC_centroides", "SJC_centroides-pulse",
+          ].forEach((cid) => {
             if (map.getLayer(cid))
               map.setLayoutProperty(cid, "visibility", vis);
           });
@@ -1549,6 +1908,15 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         "polosBienestar",
         "polosCentroides",
         "polosCentroides-pulse",
+        "SJC_Pue",
+        "SJC_centroides",
+        "SJC_centroides-pulse",
+        "polos_topo",
+        "cent_polos_topo",
+        "cent_polos_topo-pulse",
+        "podebis_Tab_Oax_Tlaxc",
+        "cent_podebis_Tab_Oax_Tlaxc",
+        "cent_podebis_Tab_Oax_Tlaxc-pulse",
       ];
       asambleasRegionalesLayers.forEach((layerId) => {
         if (map.getLayer(layerId)) {
@@ -1575,6 +1943,43 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
             pulseOpacity * 0.5,
           );
         }
+        if (map.getLayer("SJC_centroides-pulse")) {
+          map.setPaintProperty(
+            "SJC_centroides-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "SJC_centroides-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+        if (map.getLayer("cent_polos_topo-pulse")) {
+          map.setPaintProperty(
+            "cent_polos_topo-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "cent_polos_topo-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+        if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+          map.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+
         splitBlinkAnimationId.current =
           requestAnimationFrame(animateSplitPulse);
       };
@@ -1666,6 +2071,15 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
           "polosBienestar",
           "polosCentroides",
           "polosCentroides-pulse",
+          "SJC_Pue",
+          "SJC_centroides",
+          "SJC_centroides-pulse",
+          "polos_topo",
+          "cent_polos_topo",
+          "cent_polos_topo-pulse",
+          "podebis_Tab_Oax_Tlaxc",
+          "cent_podebis_Tab_Oax_Tlaxc",
+          "cent_podebis_Tab_Oax_Tlaxc-pulse",
         ];
         asambleasRegionalesLayers.forEach((layerId) => {
           if (map.getLayer(layerId)) {
@@ -1692,6 +2106,43 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
               pulseOpacity * 0.5,
             );
           }
+          if (map.getLayer("SJC_centroides-pulse")) {
+            map.setPaintProperty(
+              "SJC_centroides-pulse",
+              "circle-radius",
+              pulseRadius,
+            );
+            map.setPaintProperty(
+              "SJC_centroides-pulse",
+              "circle-opacity",
+              pulseOpacity * 0.5,
+            );
+          }
+          if (map.getLayer("cent_polos_topo-pulse")) {
+            map.setPaintProperty(
+              "cent_polos_topo-pulse",
+              "circle-radius",
+              pulseRadius,
+            );
+            map.setPaintProperty(
+              "cent_polos_topo-pulse",
+              "circle-opacity",
+              pulseOpacity * 0.5,
+            );
+          }
+          if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+            map.setPaintProperty(
+              "cent_podebis_Tab_Oax_Tlaxc-pulse",
+              "circle-radius",
+              pulseRadius,
+            );
+            map.setPaintProperty(
+              "cent_podebis_Tab_Oax_Tlaxc-pulse",
+              "circle-opacity",
+              pulseOpacity * 0.5,
+            );
+          }
+
           splitBlinkAnimationId.current =
             requestAnimationFrame(animateSplitPulse);
         };
@@ -1727,7 +2178,7 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
 
   // Handler para cambiar visibilidad de capas en el mapa secundario
   const handleSplitLayerToggle = useCallback((id: string) => {
-    setSplitLayersVisibility(prev => ({
+    setSplitLayersVisibility((prev) => ({
       ...prev,
       [id]: !prev[id],
     }));
@@ -1736,35 +2187,84 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   // Configuración de secciones para el InfoBox del mapa secundario
   const splitInfoBoxSections: InfoBoxSection[] = [
     {
-      title: 'Polos',
+      title: "Polos",
       items: [
-        { id: 'polosBienestar', label: 'Polos de Desarrollo para el BIENESTAR', color: '#9b2247', shape: 'circle', switch: false, checked: splitLayersVisibility['polosBienestar'] ?? true },
+        {
+          id: "polosBienestar",
+          label: "Polos de Desarrollo para el BIENESTAR",
+          color: "#9b2247",
+          shape: "circle",
+          switch: false,
+          checked: splitLayersVisibility["polosBienestar"] ?? true,
+        },
       ],
     },
     {
-      title: 'Comunidades Indígenas',
+      title: "Comunidades Indígenas",
       items: [
-        { id: 'LocalidadesSedeINPI', label: 'Pueblos Indígenas', color: '#666666', shape: 'circle', switch: true, checked: splitLayersVisibility['LocalidadesSedeINPI'] ?? false },
+        {
+          id: "LocalidadesSedeINPI",
+          label: "Pueblos Indígenas",
+          color: "#666666",
+          shape: "circle",
+          switch: true,
+          checked: splitLayersVisibility["LocalidadesSedeINPI"] ?? false,
+        },
       ],
     },
     {
-      title: 'Zona 1 - NORTE',
+      title: "Zona 1 - NORTE",
       items: [
-        { id: 'ofrep_zona1', label: 'Oficinas INPI', color: '#a57f2c', shape: 'circle', switch: true, checked: splitLayersVisibility['ofrep_zona1'] ?? false },
-        { id: 'regiones_zona1', label: 'Regiones de Paz', color: '#66c2a5', shape: 'square', switch: true, checked: splitLayersVisibility['regiones_zona1'] ?? false },
+        {
+          id: "ofrep_zona1",
+          label: "Oficinas INPI",
+          color: "#a57f2c",
+          shape: "circle",
+          switch: true,
+          checked: splitLayersVisibility["ofrep_zona1"] ?? false,
+        },
+        {
+          id: "regiones_zona1",
+          label: "Regiones de Paz",
+          color: "#66c2a5",
+          shape: "square",
+          switch: true,
+          checked: splitLayersVisibility["regiones_zona1"] ?? false,
+        },
       ],
     },
     {
-      title: 'Zona 2 - SUR',
+      title: "Zona 2 - SUR",
       items: [
-        { id: 'ofrep_zona2', label: 'Oficinas INPI', color: '#a57f2c', shape: 'circle', switch: true, checked: splitLayersVisibility['ofrep_zona2'] ?? false },
-        { id: 'regiones_zona2', label: 'Regiones de Paz', color: '#fc8d62', shape: 'square', switch: true, checked: splitLayersVisibility['regiones_zona2'] ?? false },
+        {
+          id: "ofrep_zona2",
+          label: "Oficinas INPI",
+          color: "#a57f2c",
+          shape: "circle",
+          switch: true,
+          checked: splitLayersVisibility["ofrep_zona2"] ?? false,
+        },
+        {
+          id: "regiones_zona2",
+          label: "Regiones de Paz",
+          color: "#fc8d62",
+          shape: "square",
+          switch: true,
+          checked: splitLayersVisibility["regiones_zona2"] ?? false,
+        },
       ],
     },
     {
-      title: 'Presidencias',
+      title: "Presidencias",
       items: [
-        { id: 'PresidenciasMunicipales', label: 'Cabeceras Municipales', color: '#000000', shape: 'circle', switch: true, checked: splitLayersVisibility['PresidenciasMunicipales'] ?? false },
+        {
+          id: "PresidenciasMunicipales",
+          label: "Cabeceras Municipales",
+          color: "#000000",
+          shape: "circle",
+          switch: true,
+          checked: splitLayersVisibility["PresidenciasMunicipales"] ?? false,
+        },
       ],
     },
   ];
@@ -1775,16 +2275,19 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
     if (!map || !map.isStyleLoaded()) return;
 
     Object.entries(splitLayersVisibility).forEach(([id, visible]) => {
-      const vis = visible ? 'visible' : 'none';
+      const vis = visible ? "visible" : "none";
       try {
         if (map.getLayer(id)) {
-          map.setLayoutProperty(id, 'visibility', vis);
+          map.setLayoutProperty(id, "visibility", vis);
         }
-        // También actualizar centroides si es polosBienestar
-        if (id === 'polosBienestar') {
-          ['polosCentroides', 'polosCentroides-pulse'].forEach(cid => {
+        // También actualizar centroides y SJC si es polosBienestar
+        if (id === "polosBienestar") {
+          [
+            "polosCentroides", "polosCentroides-pulse",
+            "SJC_Pue", "SJC_centroides", "SJC_centroides-pulse",
+          ].forEach((cid) => {
             if (map.getLayer(cid)) {
-              map.setLayoutProperty(cid, 'visibility', vis);
+              map.setLayoutProperty(cid, "visibility", vis);
             }
           });
         }
@@ -1851,6 +2354,15 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         "polosBienestar",
         "polosCentroides",
         "polosCentroides-pulse",
+        "SJC_Pue",
+        "SJC_centroides",
+        "SJC_centroides-pulse",
+        "polos_topo",
+        "cent_polos_topo",
+        "cent_polos_topo-pulse",
+        "podebis_Tab_Oax_Tlaxc",
+        "cent_podebis_Tab_Oax_Tlaxc",
+        "cent_podebis_Tab_Oax_Tlaxc-pulse",
       ];
       asambleasRegionalesLayers.forEach((layerId) => {
         if (map.getLayer(layerId)) {
@@ -1934,6 +2446,43 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
           );
           map.setPaintProperty(
             "polosCentroides-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+        if (map.getLayer("SJC_centroides-pulse")) {
+          map.setPaintProperty(
+            "SJC_centroides-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "SJC_centroides-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+
+        if (map.getLayer("cent_polos_topo-pulse")) {
+          map.setPaintProperty(
+            "cent_polos_topo-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "cent_polos_topo-pulse",
+            "circle-opacity",
+            pulseOpacity * 0.5,
+          );
+        }
+        if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
+          map.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
+            "circle-radius",
+            pulseRadius,
+          );
+          map.setPaintProperty(
+            "cent_podebis_Tab_Oax_Tlaxc-pulse",
             "circle-opacity",
             pulseOpacity * 0.5,
           );
@@ -2036,7 +2585,13 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
       }
       maplibregl.removeProtocol("pmtiles");
     };
-  }, [apiKey, attachAllTooltipEvents, drawSingleRouteOnMap, animateCompass]);
+  }, [
+    apiKey,
+    attachAllTooltipEvents,
+    drawSingleRouteOnMap,
+    animateCompass,
+    minimapStyleUrl,
+  ]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -2223,16 +2778,16 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
         </div>
 
         <div className="custom-popup-container">
-          {routesData.map((route) => {
+          {routesData.map((route, idx) => {
             if (!mapRef.current) return null;
-            const screenPoint = mapRef.current.project(route.endPoint);
+            const sp = mapRef.current.project(route.endPoint);
             return (
               <div
                 key={route.id}
                 className="custom-route-popup"
                 style={{
-                  left: `${screenPoint.x}px`,
-                  top: `${screenPoint.y}px`,
+                  left: `${sp.x + 14}px`,
+                  top: `${sp.y - 8}px`,
                 }}
               >
                 <strong>Distancia:</strong> {route.distance} km
@@ -2241,16 +2796,16 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
               </div>
             );
           })}
-          {linesData.map((line) => {
+          {linesData.map((line, idx) => {
             if (!mapRef.current) return null;
-            const screenPoint = mapRef.current.project(line.endPoint);
+            const sp = mapRef.current.project(line.endPoint);
             return (
               <div
                 key={`line-${line.id}`}
                 className="custom-route-popup"
                 style={{
-                  left: `${screenPoint.x}px`,
-                  top: `${screenPoint.y}px`,
+                  left: `${sp.x + 14}px`,
+                  top: `${sp.y - 8}px`,
                   backgroundColor: "#ff6b35",
                   color: "#ffffff",
                 }}
