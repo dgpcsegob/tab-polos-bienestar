@@ -1,15 +1,15 @@
 {
   "files": {
-    "main.css": "/tab-polos-bienestar/static/css/main.ccd4c1bb.css",
-    "main.js": "/tab-polos-bienestar/static/js/main.99dc5eac.js",
-    "static/js/453.855ef8ee.chunk.js": "/tab-polos-bienestar/static/js/453.855ef8ee.chunk.js",
-    "index.html": "/tab-polos-bienestar/index.html",
-    "main.ccd4c1bb.css.map": "/tab-polos-bienestar/static/css/main.ccd4c1bb.css.map",
-    "main.99dc5eac.js.map": "/tab-polos-bienestar/static/js/main.99dc5eac.js.map",
-    "453.855ef8ee.chunk.js.map": "/tab-polos-bienestar/static/js/453.855ef8ee.chunk.js.map"
+    "main.css": "/static/css/main.ccd4c1bb.css",
+    "main.js": "/static/js/main.78445288.js",
+    "static/js/453.855ef8ee.chunk.js": "/static/js/453.855ef8ee.chunk.js",
+    "index.html": "/index.html",
+    "main.ccd4c1bb.css.map": "/static/css/main.ccd4c1bb.css.map",
+    "main.78445288.js.map": "/static/js/main.78445288.js.map",
+    "453.855ef8ee.chunk.js.map": "/static/js/453.855ef8ee.chunk.js.map"
   },
   "entrypoints": [
     "static/css/main.ccd4c1bb.css",
-    "static/js/main.99dc5eac.js"
+    "static/js/main.78445288.js"
   ]
 }
