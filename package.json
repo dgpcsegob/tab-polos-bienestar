@@ -2,7 +2,7 @@
   "name": "tab-polos-bienestar",
   "version": "0.1.0",
   "private": true,
-  "homepage": "",
+  "homepage": "https://dgpcsegob.github.io/tab-polos-bienestar",
   "dependencies": {
     "@aesqe/mapboxgl-minimap": "^1.0.0",
     "@mapbox-controls/ruler": "^3.0.0",
@@ -18,7 +18,6 @@
     "@types/node": "^16.18.126",
     "@types/xlsx": "^0.0.36",
     "@watergis/mapbox-gl-elevation": "^1.0.5",
-    "jsx": "react-jsx",
     "leaflet": "^1.9.4",
     "mapbox-gl-controls": "^2.3.5",
     "maplibre-gl": "^5.6.1",

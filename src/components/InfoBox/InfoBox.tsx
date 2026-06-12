@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import './InfoBox.css';
 
 type LegendItem = {
@@ -24,48 +24,26 @@ type InfoBoxProps = {
   initialOpen?: boolean;
 };
 
-/** Toggle “gooey” (Uiverse) convertido a componente controlado */
-const GooToggle: React.FC<{
+/** Botón neumórfico de encendido/apagado (power button) */
+const PowerToggle: React.FC<{
   checked: boolean;
   onChange: () => void;
   ariaLabel?: string;
-}> = ({ checked, onChange, ariaLabel }) => {
-  const id = useMemo(() => `goo-${Math.random().toString(36).slice(2, 9)}`, []);
-  return (
-    <div className="toggle-container" aria-label={ariaLabel}>
-      <input
-        id={id}
-        type="checkbox"
-        className="toggle-input"
-        checked={checked}
-        onChange={onChange}
-        aria-checked={checked}
-        role="switch"
-      />
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 292 142" className="toggle" aria-hidden="true">
-        <path
-          d="M71 142C31.7878 142 0 110.212 0 71C0 31.7878 31.7878 0 71 0C110.212 0 119 30 146 30C173 30 182 0 221 0C260 0 292 31.7878 292 71C292 110.212 260.212 142 221 142C181.788 142 173 112 146 112C119 112 110.212 142 71 142Z"
-          className="toggle-background"
-        />
-        <rect rx="6" height="64" width="12" y="39" x="64" className="toggle-icon on" />
-        <path
-          d="M221 91C232.046 91 241 82.0457 241 71C241 59.9543 232.046 51 221 51C209.954 51 201 59.9543 201 71C201 82.0457 209.954 91 221 91ZM221 103C238.673 103 253 88.6731 253 71C253 53.3269 238.673 39 221 39C203.327 39 189 53.3269 189 71C189 88.6731 203.327 103 221 103Z"
-          fillRule="evenodd"
-          className="toggle-icon off"
-        />
-        <g filter="url(#goo)">
-          <rect fill="#fff" rx="29" height="58" width="116" y="42" x="13" className="toggle-circle-center" />
-          <rect fill="#fff" rx="58" height="114" width="114" y="14" x="14" className="toggle-circle left" />
-          <rect fill="#fff" rx="58" height="114" width="114" y="14" x="164" className="toggle-circle right" />
-        </g>
-        <filter id="goo">
-          <feGaussianBlur stdDeviation="10" result="blur" in="SourceGraphic" />
-          <feColorMatrix result="goo" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -7" in="blur" type="matrix" />
-        </filter>
-      </svg>
-    </div>
-  );
-};
+}> = ({ checked, onChange, ariaLabel }) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={ariaLabel}
+    title={checked ? 'Apagar capa' : 'Encender capa'}
+    className={`power-toggle ${checked ? 'on' : ''}`}
+    onClick={onChange}
+  >
+    <span className="power-cap">
+      <span className={`power-icon ${checked ? 'circle' : 'bar'}`} aria-hidden="true" />
+    </span>
+  </button>
+);
 
 const InfoBox: React.FC<InfoBoxProps> = ({
   title,
@@ -75,19 +53,42 @@ const InfoBox: React.FC<InfoBoxProps> = ({
   initialOpen = true,
 }) => {
   const [open, setOpen] = useState(initialOpen);
+  const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
+
+  const toggleSection = (idx: number) =>
+    setCollapsed((prev) => ({ ...prev, [idx]: !prev[idx] }));
+
+  // Total de capas con switch encendidas (para el footer)
+  const activeCount = sections.reduce(
+    (acc, s) => acc + s.items.filter((i) => i.switch && i.checked).length,
+    0,
+  );
 
   return (
     <>
       {/* Botón flotante cuando el panel está oculto */}
       {!open && (
         <button
-          className="floating-reveal-btn blink"
+          className="floating-reveal-btn"
           onClick={() => setOpen(true)}
-          aria-label="Mostrar panel"
-          title="Mostrar panel"
+          aria-label="Mostrar panel de capas"
+          title="Mostrar panel de capas"
         >
-          {/* Chevron hacia la izquierda (entra desde la izquierda) */}
-          <span className="chev right" />
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="12 2 2 7 12 12 22 7 12 2" />
+            <polyline points="2 17 12 22 22 17" />
+            <polyline points="2 12 12 17 22 12" />
+          </svg>
         </button>
       )}
 
@@ -95,49 +96,89 @@ const InfoBox: React.FC<InfoBoxProps> = ({
         <header className="info-header">
           <div className="titles">
             <h2 className="info-title">{title}</h2>
-            {subtitle && <p className="info-subtitle">{subtitle}</p>}
+            <p className="info-subtitle">{subtitle ?? 'Secretaría de Gobernación'}</p>
           </div>
 
-          {/* Botón para ocultar (empuja a la derecha) */}
           <button
             className="side-toggle"
             onClick={() => setOpen(false)}
             aria-label="Ocultar panel"
             title="Ocultar panel"
           >
-            {/* Chevron hacia la derecha */}
             <span className="chev left" />
           </button>
         </header>
 
         <div className="info-content">
-          {sections.map((section, sIdx) => (
-            <section className="legend-section" key={sIdx}>
-              <div className="legend-title">{section.title}</div>
+          {sections.map((section, sIdx) => {
+            const isCollapsed = !!collapsed[sIdx];
+            const switchables = section.items.filter((i) => i.switch);
+            const activeInSection = switchables.filter((i) => i.checked).length;
 
-              {section.items.map((item) => (
-                <div className="legend-row" key={item.id}>
-                  {item.shape && item.color && (
-                    <span
-                      className={`shape ${item.shape}`}
-                      style={{ backgroundColor: item.color, width: 12, height: 12 }}
-                    />
+            return (
+              <section
+                className={`legend-section ${isCollapsed ? 'collapsed' : ''}`}
+                key={sIdx}
+              >
+                <button
+                  className="legend-header"
+                  onClick={() => toggleSection(sIdx)}
+                  aria-expanded={!isCollapsed}
+                >
+                  <span className="legend-accent" aria-hidden="true" />
+                  <span className="legend-title">{section.title}</span>
+                  {activeInSection > 0 && (
+                    <span className="legend-badge">{activeInSection}</span>
                   )}
+                  <span
+                    className={`legend-chevron ${isCollapsed ? '' : 'expanded'}`}
+                    aria-hidden="true"
+                  />
+                </button>
 
-                  <span className="legend-label">{item.label}</span>
+                <div className="legend-items-wrap">
+                  <div className="legend-items">
+                    {section.items.map((item) => (
+                      <div
+                        className={`legend-row ${item.switch && !item.checked ? 'inactive' : ''}`}
+                        key={item.id}
+                      >
+                        {item.shape && item.color && (
+                          <span
+                            className={`shape ${item.shape}`}
+                            style={{ backgroundColor: item.color }}
+                          />
+                        )}
 
-                  {item.switch && (
-                    <GooToggle
-                      checked={!!item.checked}
-                      onChange={() => onToggle && onToggle(item.id)}
-                      ariaLabel={`Activar/Desactivar ${item.label}`}
-                    />
-                  )}
+                        <span className="legend-label">{item.label}</span>
+
+                        {item.switch && (
+                          <PowerToggle
+                            checked={!!item.checked}
+                            onChange={() => onToggle && onToggle(item.id)}
+                            ariaLabel={`Activar/Desactivar ${item.label}`}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              ))}
-            </section>
-          ))}
+              </section>
+            );
+          })}
         </div>
+
+        <footer className="info-footer">
+          <span
+            className={`footer-dot ${activeCount > 0 ? 'on' : ''}`}
+            aria-hidden="true"
+          />
+          <span>
+            {activeCount === 0
+              ? 'Sin capas adicionales activas'
+              : `${activeCount} capa${activeCount > 1 ? 's' : ''} adicional${activeCount > 1 ? 'es' : ''} activa${activeCount > 1 ? 's' : ''}`}
+          </span>
+        </footer>
       </aside>
     </>
   );

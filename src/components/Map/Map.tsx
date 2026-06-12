@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import maplibregl, {
   LngLat,
   LngLatLike,
@@ -2704,13 +2704,15 @@ const fixEncoding = (text: any): string => {
     gap: "10px",
   };
   const controlButtonStyle: React.CSSProperties = {
-    width: 40,
-    height: 40,
-    borderRadius: 9999,
-    background: "#ffffff",
-    border: "1px solid #e5e7eb",
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    background: "rgba(255, 255, 255, 0.88)",
+    backdropFilter: "blur(10px)",
+    WebkitBackdropFilter: "blur(10px)",
+    border: "1px solid rgba(255, 255, 255, 0.7)",
     padding: 6,
-    boxShadow: "0 6px 16px rgba(0,0,0,0.08)",
+    boxShadow: "0 8px 24px rgba(97, 18, 50, 0.18)",
     cursor: "pointer",
   };
   const buttonIconStyle: React.CSSProperties = {
@@ -2754,11 +2756,13 @@ const fixEncoding = (text: any): string => {
             left: "50%",
             transform: "translateX(-50%)",
             zIndex: 25,
-            background: "rgba(255, 255, 255, 0.3)",
-            backdropFilter: "blur(8px)",
-            borderRadius: 12,
+            background: "rgba(255, 255, 255, 0.55)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            border: "1px solid rgba(255, 255, 255, 0.6)",
+            borderRadius: "0 0 14px 14px",
             padding: "2px 2px",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+            boxShadow: "0 8px 20px rgba(97, 18, 50, 0.15)",
             width: 200,
             height: 60,
             display: "flex",
