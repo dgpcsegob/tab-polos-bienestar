@@ -29,6 +29,235 @@ const get3DIcon = (isOn: boolean) => {
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 };
 
+// Centro de la extensión del pmtiles poligono_polo_QR
+const POLO_QR_CENTROID: [number, number] = [-86.9532875, 20.8698405];
+
+// El pmtiles de Quintana Roo sólo trae Id/Nombre, así que los datos que se
+// muestran en la etiqueta se definen aquí.
+const POLO_QR_INFO = {
+  podebis: "Quintana Roo",
+  entidad: "Quintana Roo",
+  publicacion: "27 de julio de 2026",
+};
+
+// PODEBIS excluidos de polos7 / centroides_polos7 (se identifican por "layer")
+const POLOS_EXCLUIDOS = ["Parque Hidalgo"];
+const FILTRO_POLOS_EXCLUIDOS = [
+  "!",
+  ["in", ["get", "layer"], ["literal", POLOS_EXCLUIDOS]],
+] as any;
+
+// === Capas de centroides (pulso, click-para-acercar, visibilidad conjunta) ===
+// Registrar aquí una capa nueva la habilita en el mapa principal y en el dividido.
+const CENTROID_PULSE_LAYERS = [
+  "polosCentroides-pulse",
+  "SJC_centroides-pulse",
+  "cent_polos_topo-pulse",
+  "cent_podebis_Tab_Oax_Tlaxc-pulse",
+  "cent_poligono_polo_QR-pulse",
+];
+
+const CENTROID_CLICK_LAYERS = [
+  "polosCentroides",
+  "polosCentroides-pulse",
+  "SJC_centroides",
+  "SJC_centroides-pulse",
+  "cent_polos_topo",
+  "cent_polos_topo-pulse",
+  "cent_podebis_Tab_Oax_Tlaxc",
+  "cent_podebis_Tab_Oax_Tlaxc-pulse",
+  "cent_poligono_polo_QR",
+  "cent_poligono_polo_QR-pulse",
+];
+
+// Polígonos + centroides que acompañan al toggle de "polosBienestar"
+const PODEBIS_LAYERS = [
+  "polosBienestar",
+  "polosCentroides",
+  "polosCentroides-pulse",
+  "SJC_Pue",
+  "SJC_centroides",
+  "SJC_centroides-pulse",
+  "polos_topo",
+  "cent_polos_topo",
+  "cent_polos_topo-pulse",
+  "podebis_Tab_Oax_Tlaxc",
+  "cent_podebis_Tab_Oax_Tlaxc",
+  "cent_podebis_Tab_Oax_Tlaxc-pulse",
+  "poligono_polo_QR",
+  "cent_poligono_polo_QR",
+  "cent_poligono_polo_QR-pulse",
+];
+
+// Aplica el pulso compartido a todas las capas de centroides registradas
+const applyCentroidPulse = (
+  map: MaplibreMap,
+  pulseRadius: number,
+  pulseOpacity: number,
+) => {
+  CENTROID_PULSE_LAYERS.forEach((layerId) => {
+    if (!map.getLayer(layerId)) return;
+    map.setPaintProperty(layerId, "circle-radius", pulseRadius);
+    map.setPaintProperty(layerId, "circle-opacity", pulseOpacity * 0.5);
+  });
+};
+
+// === Vuelo al hacer click en un centroide ===
+const POLO_FLY_ZOOM = 13;
+// Aceleración y frenado suaves; evita el arranque brusco del easing por omisión
+const easeInOutCubic = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+// El polígono aparece y el centroide se apaga de forma gradual al cruzar el
+// umbral de zoom, en lugar de saltar de golpe a media animación.
+const POLIGONO_FADE_IN: any = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  11,
+  0,
+  11.9,
+  1,
+];
+const CENTROIDE_FADE_OUT: any = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  10.4,
+  1,
+  11,
+  0,
+];
+
+// Extensión de la república usada como límite del visor y del minimapa
+const MEXICO_BOUNDS: [[number, number], [number, number]] = [
+  [-120, 14],
+  [-84, 33.5],
+];
+
+// === Minimapa: panorama fijo, nunca cambia de zoom ===
+const MINIMAP_FIXED_CENTER: [number, number] = [-101.14765, 23.33676];
+// Zoom provisional; al cargar se ajusta con fitBounds para que entre todo México
+const MINIMAP_FIXED_ZOOM = 2;
+// Por debajo de este tamaño el recuadro es ilegible → se marca con un punto
+const MINIMAP_MIN_RECT_PX = 14;
+
+const EMPTY_FEATURES = {
+  type: "FeatureCollection" as const,
+  features: [],
+};
+
+const addMinimapIndicatorLayers = (minimap: MaplibreMap) => {
+  // Encuadra toda la república una sola vez; a partir de aquí el minimapa
+  // ya no cambia de centro ni de zoom.
+  minimap.fitBounds(MEXICO_BOUNDS, { padding: 6, animate: false });
+
+  minimap.addSource("viewport-bounds", {
+    type: "geojson",
+    data: EMPTY_FEATURES,
+  });
+  minimap.addSource("viewport-marker", {
+    type: "geojson",
+    data: EMPTY_FEATURES,
+  });
+
+  minimap.addLayer({
+    id: "viewport-bounds-fill",
+    type: "fill",
+    source: "viewport-bounds",
+    paint: { "fill-color": "#9b2247", "fill-opacity": 0.18 },
+  });
+  minimap.addLayer({
+    id: "viewport-bounds-outline",
+    type: "line",
+    source: "viewport-bounds",
+    paint: { "line-color": "#9b2247", "line-width": 2 },
+  });
+
+  // Punto que sustituye al recuadro cuando el zoom principal es alto
+  minimap.addLayer({
+    id: "viewport-marker-halo",
+    type: "circle",
+    source: "viewport-marker",
+    paint: {
+      "circle-radius": 9,
+      "circle-color": "#9b2247",
+      "circle-opacity": 0.18,
+      "circle-stroke-color": "#9b2247",
+      "circle-stroke-width": 1,
+      "circle-stroke-opacity": 0.5,
+    },
+  });
+  minimap.addLayer({
+    id: "viewport-marker-dot",
+    type: "circle",
+    source: "viewport-marker",
+    paint: {
+      "circle-radius": 4,
+      "circle-color": "#9b2247",
+      "circle-stroke-color": "#ffffff",
+      "circle-stroke-width": 2,
+    },
+  });
+};
+
+// Marca en el minimapa dónde está el mapa principal, sin alterar su zoom.
+const syncMinimapIndicator = (
+  minimap: MaplibreMap | null,
+  mainMap: MaplibreMap,
+) => {
+  if (!minimap) return;
+  const boundsSource = minimap.getSource("viewport-bounds") as
+    | GeoJSONSource
+    | undefined;
+  const markerSource = minimap.getSource("viewport-marker") as
+    | GeoJSONSource
+    | undefined;
+  if (!boundsSource || !markerSource) return;
+
+  const bounds = mainMap.getBounds();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+
+  // Tamaño que tendría el recuadro en píxeles del minimapa
+  const pSW = minimap.project(sw);
+  const pNE = minimap.project(ne);
+  const rectW = Math.abs(pNE.x - pSW.x);
+  const rectH = Math.abs(pSW.y - pNE.y);
+
+  // Normalmente se dibuja el recuadro; sólo con el mapa principal muy acercado
+  // se reduce a un punto que no sería legible como rectángulo.
+  if (Math.min(rectW, rectH) < MINIMAP_MIN_RECT_PX) {
+    const center = mainMap.getCenter();
+    boundsSource.setData(EMPTY_FEATURES);
+    markerSource.setData({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [center.lng, center.lat] },
+      properties: {},
+    } as Feature<Point>);
+    return;
+  }
+
+  const boundsPolygon: Feature<Polygon> = {
+    type: "Feature",
+    geometry: {
+      type: "Polygon",
+      coordinates: [
+        [
+          bounds.getSouthWest().toArray(),
+          bounds.getNorthWest().toArray(),
+          bounds.getNorthEast().toArray(),
+          bounds.getSouthEast().toArray(),
+          bounds.getSouthWest().toArray(),
+        ],
+      ],
+    },
+    properties: {},
+  };
+  markerSource.setData(EMPTY_FEATURES);
+  boundsSource.setData(boundsPolygon);
+};
+
 const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const mapRef = useRef<MaplibreMap | null>(null);
   const minimapRef = useRef<MaplibreMap | null>(null);
@@ -63,6 +292,11 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const lastPointRef = useRef<{ x: number; y: number } | null>(null);
   const lastLngLatRef = useRef<maplibregl.LngLat | null>(null);
   const lastHoverIdRef = useRef<string | number | null>(null);
+  // Handler de click por instancia de mapa, para poder retirarlo al re-adjuntar
+  // (el mapa principal y el dividido tienen el suyo)
+  const centroidClickRef = useRef(
+    new WeakMap<MaplibreMap, (e: any) => void>(),
+  );
 
   // === Brújula ===
   const [displayBearing, setDisplayBearing] = useState(0);
@@ -569,6 +803,21 @@ const fixEncoding = (text: any): string => {
       }
     });
 
+    const poloQRTooltip = () =>
+      `<strong>PODEBIS:</strong> ${POLO_QR_INFO.podebis}<br/>
+     <strong>Entidad:</strong> ${POLO_QR_INFO.entidad}<br/>
+     <strong>Publicación:</strong> ${POLO_QR_INFO.publicacion}`;
+
+    ensureLayerHover("poligono_polo_QR", poloQRTooltip);
+
+    ["cent_poligono_polo_QR", "cent_poligono_polo_QR-pulse"].forEach(
+      (layerId) => {
+        if (map.getLayer(layerId)) {
+          ensureLayerHover(layerId, poloQRTooltip);
+        }
+      },
+    );
+
     // === Click en centroide → zoom al polígono correspondiente ===
     const zoomToCentroid = (
       e: maplibregl.MapMouseEvent & { features?: any[] },
@@ -577,24 +826,29 @@ const fixEncoding = (text: any): string => {
       if (!e.features?.length) return;
       const geom = e.features[0].geometry as any;
       const coords: [number, number] = geom.coordinates;
-      map.flyTo({ center: coords, zoom: 13, duration: 1200 });
+
+      map.flyTo({
+        center: coords,
+        zoom: POLO_FLY_ZOOM,
+        duration: 2600,
+        // curve < 1.42 aplana el arco: se percibe como acercamiento continuo
+        // en vez de un alejamiento previo brusco
+        curve: 1.15,
+        easing: easeInOutCubic,
+        // Imprescindible: sin esto MapLibre degrada el vuelo a un salto seco
+        // cuando el sistema pide reducir animaciones (caso de este equipo)
+        essential: true,
+      });
     };
 
-    [
-      "polosCentroides",
-      "polosCentroides-pulse",
-      "SJC_centroides",
-      "SJC_centroides-pulse",
-      "cent_polos_topo",
-      "cent_polos_topo-pulse",
-      "cent_podebis_Tab_Oax_Tlaxc",
-      "cent_podebis_Tab_Oax_Tlaxc-pulse",
-    ].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        map.off("click", layerId, zoomToCentroid);
-        map.on("click", layerId, zoomToCentroid);
-      }
-    });
+    // Un solo listener para todas las capas: registrarlo por capa hacía que un
+    // click sobre el punto y su halo disparara dos vuelos simultáneos.
+    const prevClickHandler = centroidClickRef.current.get(map);
+    if (prevClickHandler) {
+      map.off("click", CENTROID_CLICK_LAYERS, prevClickHandler);
+    }
+    centroidClickRef.current.set(map, zoomToCentroid);
+    map.on("click", CENTROID_CLICK_LAYERS, zoomToCentroid);
   }, []);
 
   const addRouteToMap = useCallback(
@@ -831,9 +1085,11 @@ const fixEncoding = (text: any): string => {
         source: "polosBienestar",
         "source-layer": "polos7_tile",
         minzoom: 11,
+        filter: FILTRO_POLOS_EXCLUIDOS,
         paint: {
           "fill-color": "rgba(155, 34, 71, 0.7)",
           "fill-outline-color": "#ffffff",
+          "fill-opacity": POLIGONO_FADE_IN,
         },
       });
     }
@@ -853,6 +1109,7 @@ const fixEncoding = (text: any): string => {
         source: "polosBienestar_centroides",
         "source-layer": "centroides_polos7_tile", // cambia si tu layer interno difiere
         maxzoom: 11, // oculto desde 11
+        filter: FILTRO_POLOS_EXCLUIDOS,
         paint: {
           "circle-radius": 10,
           "circle-color": "#9b2247",
@@ -868,11 +1125,14 @@ const fixEncoding = (text: any): string => {
         source: "polosBienestar_centroides",
         "source-layer": "centroides_polos7_tile", // cambia si tu layer interno difiere
         maxzoom: 11, // oculto desde 11
+        filter: FILTRO_POLOS_EXCLUIDOS,
         paint: {
           "circle-radius": 4,
           "circle-color": "#9b2247",
           "circle-stroke-color": "#ffffff",
           "circle-stroke-width": 1,
+          "circle-opacity": CENTROIDE_FADE_OUT,
+          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
         },
       });
     }
@@ -894,6 +1154,7 @@ const fixEncoding = (text: any): string => {
         paint: {
           "fill-color": "rgba(155, 34, 71, 0.7)",
           "fill-outline-color": "#ffffff",
+          "fill-opacity": POLIGONO_FADE_IN,
         },
       });
     }
@@ -933,6 +1194,8 @@ const fixEncoding = (text: any): string => {
           "circle-color": "#9b2247",
           "circle-stroke-color": "#ffffff",
           "circle-stroke-width": 1,
+          "circle-opacity": CENTROIDE_FADE_OUT,
+          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
         },
       });
     }
@@ -954,6 +1217,7 @@ const fixEncoding = (text: any): string => {
         paint: {
           "fill-color": "rgba(155, 34, 71, 0.7)",
           "fill-outline-color": "#ffffff",
+          "fill-opacity": POLIGONO_FADE_IN,
         },
       });
     }
@@ -993,6 +1257,8 @@ const fixEncoding = (text: any): string => {
           "circle-color": "#9b2247",
           "circle-stroke-color": "#ffffff",
           "circle-stroke-width": 1,
+          "circle-opacity": CENTROIDE_FADE_OUT,
+          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
         },
       });
     }
@@ -1014,6 +1280,7 @@ const fixEncoding = (text: any): string => {
         paint: {
           "fill-color": "rgba(155, 34, 71, 0.7)",
           "fill-outline-color": "#ffffff",
+          "fill-opacity": POLIGONO_FADE_IN,
         },
       });
     }
@@ -1053,6 +1320,81 @@ const fixEncoding = (text: any): string => {
           "circle-color": "#9b2247",
           "circle-stroke-color": "#ffffff",
           "circle-stroke-width": 1,
+          "circle-opacity": CENTROIDE_FADE_OUT,
+          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
+        },
+      });
+    }
+
+    // === Polígono Polo Quintana Roo (≥ 11) ===
+    if (!map.getSource("poligono_polo_QR")) {
+      map.addSource("poligono_polo_QR", {
+        type: "vector",
+        url: "pmtiles://data/poligono_polo_QR.pmtiles",
+      });
+    }
+    if (!map.getLayer("poligono_polo_QR")) {
+      map.addLayer({
+        id: "poligono_polo_QR",
+        type: "fill",
+        source: "poligono_polo_QR",
+        "source-layer": "poligono_polo_QR_tile",
+        minzoom: 11,
+        paint: {
+          "fill-color": "rgba(155, 34, 71, 0.7)",
+          "fill-outline-color": "#ffffff",
+          "fill-opacity": POLIGONO_FADE_IN,
+        },
+      });
+    }
+
+    // === Centroide Polo Quintana Roo (< 11) ===
+    // El pmtiles sólo trae el polígono; el centroide se deriva de su extensión.
+    if (!map.getSource("cent_poligono_polo_QR")) {
+      map.addSource("cent_poligono_polo_QR", {
+        type: "geojson",
+        data: {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: POLO_QR_CENTROID,
+          },
+          properties: {
+            PODEBI: POLO_QR_INFO.podebis,
+            Entidad: POLO_QR_INFO.entidad,
+            Publicacion: POLO_QR_INFO.publicacion,
+          },
+        } as Feature<Point>,
+      });
+    }
+    // Pulso
+    if (!map.getLayer("cent_poligono_polo_QR-pulse")) {
+      map.addLayer({
+        id: "cent_poligono_polo_QR-pulse",
+        type: "circle",
+        source: "cent_poligono_polo_QR",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 10,
+          "circle-color": "#9b2247",
+          "circle-opacity": 0.0,
+        },
+      });
+    }
+    // Punto base
+    if (!map.getLayer("cent_poligono_polo_QR")) {
+      map.addLayer({
+        id: "cent_poligono_polo_QR",
+        type: "circle",
+        source: "cent_poligono_polo_QR",
+        maxzoom: 11,
+        paint: {
+          "circle-radius": 4,
+          "circle-color": "#9b2247",
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1,
+          "circle-opacity": CENTROIDE_FADE_OUT,
+          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
         },
       });
     }
@@ -1068,10 +1410,7 @@ const fixEncoding = (text: any): string => {
           }
         } catch {}
         if (id === "polosBienestar") {
-          [
-            "polosCentroides", "polosCentroides-pulse",
-            "SJC_Pue", "SJC_centroides", "SJC_centroides-pulse",
-          ].forEach((cid) => {
+          PODEBIS_LAYERS.forEach((cid) => {
             if (map.getLayer(cid)) {
               map.setLayoutProperty(cid, "visibility", vis);
             }
@@ -1228,30 +1567,7 @@ const fixEncoding = (text: any): string => {
             );
           }
           // 👉 Añadido: animar también el pulso de centroides
-          if (map.getLayer("polosCentroides-pulse")) {
-            map.setPaintProperty(
-              "polosCentroides-pulse",
-              "circle-radius",
-              pulseRadius,
-            );
-            map.setPaintProperty(
-              "polosCentroides-pulse",
-              "circle-opacity",
-              pulseOpacity * 0.5,
-            );
-          }
-          if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-            map.setPaintProperty(
-              "cent_podebis_Tab_Oax_Tlaxc-pulse",
-              "circle-radius",
-              pulseRadius,
-            );
-            map.setPaintProperty(
-              "cent_podebis_Tab_Oax_Tlaxc-pulse",
-              "circle-opacity",
-              pulseOpacity * 0.5,
-            );
-          }
+          applyCentroidPulse(map, pulseRadius, pulseOpacity);
           blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
         };
         animateComindPulse(0);
@@ -1387,21 +1703,7 @@ const fixEncoding = (text: any): string => {
       });
 
       // Hacer visibles los polos por defecto
-      const asambleasRegionalesLayers = [
-        "polosBienestar",
-        "polosCentroides",
-        "polosCentroides-pulse",
-        "SJC_Pue",
-        "SJC_centroides",
-        "SJC_centroides-pulse",
-        "polos_topo",
-        "cent_polos_topo",
-        "cent_polos_topo-pulse",
-        "podebis_Tab_Oax_Tlaxc",
-        "cent_podebis_Tab_Oax_Tlaxc",
-        "cent_podebis_Tab_Oax_Tlaxc-pulse",
-      ];
-      asambleasRegionalesLayers.forEach((layerId) => {
+      PODEBIS_LAYERS.forEach((layerId) => {
         if (splitMap.getLayer(layerId)) {
           splitMap.setLayoutProperty(layerId, "visibility", "visible");
         }
@@ -1448,55 +1750,7 @@ const fixEncoding = (text: any): string => {
             pulseOpacity * 0.4,
           );
         }
-        if (splitMap.getLayer("polosCentroides-pulse")) {
-          splitMap.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          splitMap.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (splitMap.getLayer("SJC_centroides-pulse")) {
-          splitMap.setPaintProperty(
-            "SJC_centroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          splitMap.setPaintProperty(
-            "SJC_centroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-
-        if (splitMap.getLayer("cent_polos_topo-pulse")) {
-          splitMap.setPaintProperty(
-            "cent_polos_topo-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          splitMap.setPaintProperty(
-            "cent_polos_topo-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (splitMap.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-          splitMap.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          splitMap.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
+        applyCentroidPulse(splitMap, pulseRadius, pulseOpacity);
 
         splitBlinkAnimationId.current =
           requestAnimationFrame(animateSplitPulse);
@@ -1508,65 +1762,20 @@ const fixEncoding = (text: any): string => {
         const splitMinimap = new maplibregl.Map({
           container: splitMinimapContainerRef.current,
           style: minimapStyleUrl,
-          center: splitMap.getCenter(),
-          zoom: splitMap.getZoom() - 3,
+          center: MINIMAP_FIXED_CENTER,
+          zoom: MINIMAP_FIXED_ZOOM,
           interactive: false,
           attributionControl: false,
         });
         splitMinimapRef.current = splitMinimap;
 
         splitMinimap.on("load", () => {
-          splitMinimap.addSource("viewport-bounds", {
-            type: "geojson",
-            data: {
-              type: "Feature",
-              geometry: { type: "Polygon", coordinates: [] },
-              properties: {},
-            },
-          });
-          splitMinimap.addLayer({
-            id: "viewport-bounds-fill",
-            type: "fill",
-            source: "viewport-bounds",
-            paint: { "fill-color": "#9f2241", "fill-opacity": 0.2 },
-          });
-          splitMinimap.addLayer({
-            id: "viewport-bounds-outline",
-            type: "line",
-            source: "viewport-bounds",
-            paint: { "line-color": "#9f2241", "line-width": 2 },
-          });
+          addMinimapIndicatorLayers(splitMinimap);
+          syncMinimapIndicator(splitMinimap, splitMap);
         });
 
-        const syncSplitMinimap = () => {
-          if (!splitMinimapRef.current) return;
-          const mainBounds = splitMap.getBounds();
-          const boundsPolygon: Feature<Polygon> = {
-            type: "Feature",
-            geometry: {
-              type: "Polygon",
-              coordinates: [
-                [
-                  mainBounds.getSouthWest().toArray(),
-                  mainBounds.getNorthWest().toArray(),
-                  mainBounds.getNorthEast().toArray(),
-                  mainBounds.getSouthEast().toArray(),
-                  mainBounds.getSouthWest().toArray(),
-                ],
-              ],
-            },
-            properties: {},
-          };
-          const source = splitMinimapRef.current.getSource(
-            "viewport-bounds",
-          ) as GeoJSONSource;
-          if (source) source.setData(boundsPolygon);
-
-          const mapZoom = splitMap.getZoom();
-          const minimapZoom = Math.max(0, mapZoom - 3);
-          splitMinimapRef.current.setCenter(splitMap.getCenter());
-          splitMinimapRef.current.setZoom(minimapZoom);
-        };
+        const syncSplitMinimap = () =>
+          syncMinimapIndicator(splitMinimapRef.current, splitMap);
 
         splitMap.on("move", syncSplitMinimap);
         splitMap.on("zoom", syncSplitMinimap);
@@ -1769,30 +1978,7 @@ const fixEncoding = (text: any): string => {
           );
         }
         // 👉 Añadido también aquí para estilos satelitales:
-        if (map.getLayer("polosCentroides-pulse")) {
-          map.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-          map.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
+        applyCentroidPulse(map, pulseRadius, pulseOpacity);
 
         blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
       };
@@ -1904,21 +2090,7 @@ const fixEncoding = (text: any): string => {
       });
 
       // Hacer visibles los polos por defecto
-      const asambleasRegionalesLayers = [
-        "polosBienestar",
-        "polosCentroides",
-        "polosCentroides-pulse",
-        "SJC_Pue",
-        "SJC_centroides",
-        "SJC_centroides-pulse",
-        "polos_topo",
-        "cent_polos_topo",
-        "cent_polos_topo-pulse",
-        "podebis_Tab_Oax_Tlaxc",
-        "cent_podebis_Tab_Oax_Tlaxc",
-        "cent_podebis_Tab_Oax_Tlaxc-pulse",
-      ];
-      asambleasRegionalesLayers.forEach((layerId) => {
+      PODEBIS_LAYERS.forEach((layerId) => {
         if (map.getLayer(layerId)) {
           map.setLayoutProperty(layerId, "visibility", "visible");
         }
@@ -1931,54 +2103,7 @@ const fixEncoding = (text: any): string => {
       const animateSplitPulse = (timestamp: number) => {
         const pulseRadius = 15 * (Math.abs(Math.sin(timestamp / 500)) + 0.5);
         const pulseOpacity = 1 - pulseRadius / 25;
-        if (map.getLayer("polosCentroides-pulse")) {
-          map.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (map.getLayer("SJC_centroides-pulse")) {
-          map.setPaintProperty(
-            "SJC_centroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "SJC_centroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (map.getLayer("cent_polos_topo-pulse")) {
-          map.setPaintProperty(
-            "cent_polos_topo-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "cent_polos_topo-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-          map.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
+        applyCentroidPulse(map, pulseRadius, pulseOpacity);
 
         splitBlinkAnimationId.current =
           requestAnimationFrame(animateSplitPulse);
@@ -2067,21 +2192,7 @@ const fixEncoding = (text: any): string => {
           if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
         });
 
-        const asambleasRegionalesLayers = [
-          "polosBienestar",
-          "polosCentroides",
-          "polosCentroides-pulse",
-          "SJC_Pue",
-          "SJC_centroides",
-          "SJC_centroides-pulse",
-          "polos_topo",
-          "cent_polos_topo",
-          "cent_polos_topo-pulse",
-          "podebis_Tab_Oax_Tlaxc",
-          "cent_podebis_Tab_Oax_Tlaxc",
-          "cent_podebis_Tab_Oax_Tlaxc-pulse",
-        ];
-        asambleasRegionalesLayers.forEach((layerId) => {
+        PODEBIS_LAYERS.forEach((layerId) => {
           if (map.getLayer(layerId)) {
             map.setLayoutProperty(layerId, "visibility", "visible");
           }
@@ -2094,54 +2205,7 @@ const fixEncoding = (text: any): string => {
         const animateSplitPulse = (timestamp: number) => {
           const pulseRadius = 15 * (Math.abs(Math.sin(timestamp / 500)) + 0.5);
           const pulseOpacity = 1 - pulseRadius / 25;
-          if (map.getLayer("polosCentroides-pulse")) {
-            map.setPaintProperty(
-              "polosCentroides-pulse",
-              "circle-radius",
-              pulseRadius,
-            );
-            map.setPaintProperty(
-              "polosCentroides-pulse",
-              "circle-opacity",
-              pulseOpacity * 0.5,
-            );
-          }
-          if (map.getLayer("SJC_centroides-pulse")) {
-            map.setPaintProperty(
-              "SJC_centroides-pulse",
-              "circle-radius",
-              pulseRadius,
-            );
-            map.setPaintProperty(
-              "SJC_centroides-pulse",
-              "circle-opacity",
-              pulseOpacity * 0.5,
-            );
-          }
-          if (map.getLayer("cent_polos_topo-pulse")) {
-            map.setPaintProperty(
-              "cent_polos_topo-pulse",
-              "circle-radius",
-              pulseRadius,
-            );
-            map.setPaintProperty(
-              "cent_polos_topo-pulse",
-              "circle-opacity",
-              pulseOpacity * 0.5,
-            );
-          }
-          if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-            map.setPaintProperty(
-              "cent_podebis_Tab_Oax_Tlaxc-pulse",
-              "circle-radius",
-              pulseRadius,
-            );
-            map.setPaintProperty(
-              "cent_podebis_Tab_Oax_Tlaxc-pulse",
-              "circle-opacity",
-              pulseOpacity * 0.5,
-            );
-          }
+          applyCentroidPulse(map, pulseRadius, pulseOpacity);
 
           splitBlinkAnimationId.current =
             requestAnimationFrame(animateSplitPulse);
@@ -2280,12 +2344,9 @@ const fixEncoding = (text: any): string => {
         if (map.getLayer(id)) {
           map.setLayoutProperty(id, "visibility", vis);
         }
-        // También actualizar centroides y SJC si es polosBienestar
+        // También actualizar centroides y demás polígonos si es polosBienestar
         if (id === "polosBienestar") {
-          [
-            "polosCentroides", "polosCentroides-pulse",
-            "SJC_Pue", "SJC_centroides", "SJC_centroides-pulse",
-          ].forEach((cid) => {
+          PODEBIS_LAYERS.forEach((cid) => {
             if (map.getLayer(cid)) {
               map.setLayoutProperty(cid, "visibility", vis);
             }
@@ -2304,10 +2365,7 @@ const fixEncoding = (text: any): string => {
 
     const protocol = new Protocol();
     maplibregl.addProtocol("pmtiles", protocol.tile);
-    const mexicoBounds: [LngLatLike, LngLatLike] = [
-      [-120, 14],
-      [-84, 33.5],
-    ];
+    const mexicoBounds: [LngLatLike, LngLatLike] = MEXICO_BOUNDS;
 
     const map = new maplibregl.Map({
       container,
@@ -2350,21 +2408,7 @@ const fixEncoding = (text: any): string => {
         }
       });
 
-      const asambleasRegionalesLayers = [
-        "polosBienestar",
-        "polosCentroides",
-        "polosCentroides-pulse",
-        "SJC_Pue",
-        "SJC_centroides",
-        "SJC_centroides-pulse",
-        "polos_topo",
-        "cent_polos_topo",
-        "cent_polos_topo-pulse",
-        "podebis_Tab_Oax_Tlaxc",
-        "cent_podebis_Tab_Oax_Tlaxc",
-        "cent_podebis_Tab_Oax_Tlaxc-pulse",
-      ];
-      asambleasRegionalesLayers.forEach((layerId) => {
+      PODEBIS_LAYERS.forEach((layerId) => {
         if (map.getLayer(layerId)) {
           map.setLayoutProperty(layerId, "visibility", "visible");
         }
@@ -2438,124 +2482,30 @@ const fixEncoding = (text: any): string => {
             pulseOpacity * 0.4,
           );
         }
-        if (map.getLayer("polosCentroides-pulse")) {
-          map.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "polosCentroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (map.getLayer("SJC_centroides-pulse")) {
-          map.setPaintProperty(
-            "SJC_centroides-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "SJC_centroides-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-
-        if (map.getLayer("cent_polos_topo-pulse")) {
-          map.setPaintProperty(
-            "cent_polos_topo-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "cent_polos_topo-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
-        if (map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-          map.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-radius",
-            pulseRadius,
-          );
-          map.setPaintProperty(
-            "cent_podebis_Tab_Oax_Tlaxc-pulse",
-            "circle-opacity",
-            pulseOpacity * 0.5,
-          );
-        }
+        applyCentroidPulse(map, pulseRadius, pulseOpacity);
 
         blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
       };
       animateComindPulse(0);
 
+      // Panorama fijo: el minimapa no se mueve ni cambia de zoom, sólo indica
+      // la posición del mapa principal.
       const minimap = new maplibregl.Map({
         container: minimapContainerRef.current as HTMLDivElement,
         style: minimapStyleUrl,
-        center: map.getCenter(),
-        zoom: map.getZoom() - 3,
+        center: MINIMAP_FIXED_CENTER,
+        zoom: MINIMAP_FIXED_ZOOM,
         interactive: false,
         attributionControl: false,
       });
       minimapRef.current = minimap;
 
       minimap.on("load", () => {
-        minimap.addSource("viewport-bounds", {
-          type: "geojson",
-          data: {
-            type: "Feature",
-            geometry: { type: "Polygon", coordinates: [] },
-            properties: {},
-          },
-        });
-        minimap.addLayer({
-          id: "viewport-bounds-fill",
-          type: "fill",
-          source: "viewport-bounds",
-          paint: { "fill-color": "#9f2247", "fill-opacity": 0.2 },
-        });
-        minimap.addLayer({
-          id: "viewport-bounds-outline",
-          type: "line",
-          source: "viewport-bounds",
-          paint: { "line-color": "#9f2247", "line-width": 2 },
-        });
+        addMinimapIndicatorLayers(minimap);
+        syncMinimapIndicator(minimap, map);
       });
 
-      const syncMaps = () => {
-        if (!minimapRef.current) return;
-        const mainBounds = map.getBounds();
-        const boundsPolygon: Feature<Polygon> = {
-          type: "Feature",
-          geometry: {
-            type: "Polygon",
-            coordinates: [
-              [
-                mainBounds.getSouthWest().toArray(),
-                mainBounds.getNorthWest().toArray(),
-                mainBounds.getNorthEast().toArray(),
-                mainBounds.getSouthEast().toArray(),
-                mainBounds.getSouthWest().toArray(),
-              ],
-            ],
-          },
-          properties: {},
-        };
-        const source = minimapRef.current.getSource(
-          "viewport-bounds",
-        ) as GeoJSONSource;
-        if (source) {
-          source.setData(boundsPolygon);
-        }
-
-        const mainZoom = map.getZoom();
-        const minimapZoom = Math.max(0, mainZoom - 3);
-        minimapRef.current.setCenter(map.getCenter());
-        minimapRef.current.setZoom(minimapZoom);
-      };
+      const syncMaps = () => syncMinimapIndicator(minimapRef.current, map);
 
       map.on("move", syncMaps);
       map.on("zoom", syncMaps);
@@ -2693,34 +2643,6 @@ const fixEncoding = (text: any): string => {
     addLineToMap,
   ]);
 
-  // === Estilos inline mínimos para asegurar botones visibles ===
-  const controlStackStyle: React.CSSProperties = {
-    position: "absolute",
-    top: "20px",
-    right: "20px",
-    zIndex: 20,
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-  };
-  const controlButtonStyle: React.CSSProperties = {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
-    background: "rgba(255, 255, 255, 0.88)",
-    backdropFilter: "blur(10px)",
-    WebkitBackdropFilter: "blur(10px)",
-    border: "1px solid rgba(255, 255, 255, 0.7)",
-    padding: 6,
-    boxShadow: "0 8px 24px rgba(97, 18, 50, 0.18)",
-    cursor: "pointer",
-  };
-  const buttonIconStyle: React.CSSProperties = {
-    width: 24,
-    height: 24,
-    display: "block",
-  };
-
   // Icono para el botón de split view
   const getSplitIcon = (isOn: boolean) => {
     const color = isOn ? "#007cbf" : "#6c757d";
@@ -2823,23 +2745,19 @@ const fixEncoding = (text: any): string => {
         </div>
 
         {/* Controles del mapa principal */}
-        <div style={controlStackStyle}>
+        <div className="map-control-stack">
           <button
             className={`map-control-button ${isSatellite ? "active" : ""}`}
             onClick={toggleSatellite}
             title={isSatellite ? "Volver a mapa normal" : "Ver mapa satelital"}
             aria-label="Cambiar vista"
-            style={controlButtonStyle}
+            aria-pressed={isSatellite}
+            data-label={isSatellite ? "Mapa normal" : "Vista satelital"}
           >
             <img
-              src={
-                isSatellite
-                  ? `${process.env.PUBLIC_URL}/satelitec.png`
-                  : `${process.env.PUBLIC_URL}/satelitebw.png`
-              }
+              src={`${process.env.PUBLIC_URL}/satelitebw.png`}
               alt="Cambiar vista"
               className="button-icon"
-              style={buttonIconStyle}
             />
           </button>
 
@@ -2848,17 +2766,13 @@ const fixEncoding = (text: any): string => {
             onClick={toggleMeasurement}
             title={isMeasuring ? "Terminar medición de ruta" : "Medir ruta"}
             aria-label="Medir ruta"
-            style={controlButtonStyle}
+            aria-pressed={isMeasuring}
+            data-label={isMeasuring ? "Terminar ruta" : "Trazar ruta"}
           >
             <img
-              src={
-                isMeasuring
-                  ? `${process.env.PUBLIC_URL}/rutac.png`
-                  : `${process.env.PUBLIC_URL}/rutabw.png`
-              }
+              src={`${process.env.PUBLIC_URL}/rutabw.png`}
               alt="Medir ruta"
               className="button-icon"
-              style={buttonIconStyle}
             />
           </button>
 
@@ -2871,22 +2785,10 @@ const fixEncoding = (text: any): string => {
                 : "Medir línea recta"
             }
             aria-label="Medir línea recta"
-            style={controlButtonStyle}
+            aria-pressed={isMeasuringLine}
+            data-label={isMeasuringLine ? "Terminar línea" : "Trazar línea"}
           >
-            <div
-              className="button-icon"
-              style={{
-                ...buttonIconStyle,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: "16px",
-                fontWeight: "bold",
-                color: isMeasuringLine ? "#007cbf" : "#6c757d",
-              }}
-            >
-              ⟷
-            </div>
+            <div className="button-icon button-icon--glyph">⟷</div>
           </button>
 
           <button
@@ -2894,14 +2796,10 @@ const fixEncoding = (text: any): string => {
             onClick={toggle3D}
             title={is3D ? "Desactivar vista 3D" : "Activar vista 3D"}
             aria-label="Vista 3D"
-            style={controlButtonStyle}
+            aria-pressed={is3D}
+            data-label={is3D ? "Desactivar 3D" : "Vista 3D"}
           >
-            <img
-              src={get3DIcon(is3D)}
-              alt="Vista 3D"
-              className="button-icon"
-              style={buttonIconStyle}
-            />
+            <img src={get3DIcon(is3D)} alt="Vista 3D" className="button-icon" />
           </button>
 
           {/* Brújula */}
@@ -2910,13 +2808,9 @@ const fixEncoding = (text: any): string => {
             onClick={resetNorth}
             title="Restaurar norte"
             aria-label="Brújula: restablecer norte"
-            style={{ ...controlButtonStyle, padding: 0 }}
+            data-label="Restaurar norte"
           >
-            <svg
-              viewBox="0 0 100 100"
-              className="compass-svg"
-              style={{ display: "block", width: "100%", height: "100%" }}
-            >
+            <svg viewBox="0 0 100 100" className="compass-svg">
               <circle
                 cx="50"
                 cy="50"
@@ -2962,13 +2856,13 @@ const fixEncoding = (text: any): string => {
             onClick={toggleSplitView}
             title={isSplitView ? "Cerrar vista dividida" : "Dividir pantalla"}
             aria-label="Dividir pantalla"
-            style={controlButtonStyle}
+            aria-pressed={isSplitView}
+            data-label={isSplitView ? "Cerrar división" : "Dividir pantalla"}
           >
             <img
               src={getSplitIcon(isSplitView)}
               alt="Dividir pantalla"
               className="button-icon"
-              style={buttonIconStyle}
             />
           </button>
         </div>
@@ -3020,7 +2914,7 @@ const fixEncoding = (text: any): string => {
           />
 
           {/* Controles del mapa secundario (sin botón de split) */}
-          <div style={{ ...controlStackStyle, right: "20px" }}>
+          <div className="map-control-stack">
             <button
               className={`map-control-button ${splitIsSatellite ? "active" : ""}`}
               onClick={toggleSplitSatellite}
@@ -3028,17 +2922,13 @@ const fixEncoding = (text: any): string => {
                 splitIsSatellite ? "Volver a mapa normal" : "Ver mapa satelital"
               }
               aria-label="Cambiar vista"
-              style={controlButtonStyle}
+              aria-pressed={splitIsSatellite}
+              data-label={splitIsSatellite ? "Mapa normal" : "Vista satelital"}
             >
               <img
-                src={
-                  splitIsSatellite
-                    ? `${process.env.PUBLIC_URL}/satelitec.png`
-                    : `${process.env.PUBLIC_URL}/satelitebw.png`
-                }
+                src={`${process.env.PUBLIC_URL}/satelitebw.png`}
                 alt="Cambiar vista"
                 className="button-icon"
-                style={buttonIconStyle}
               />
             </button>
 
@@ -3049,17 +2939,13 @@ const fixEncoding = (text: any): string => {
                 splitIsMeasuring ? "Terminar medición de ruta" : "Medir ruta"
               }
               aria-label="Medir ruta"
-              style={controlButtonStyle}
+              aria-pressed={splitIsMeasuring}
+              data-label={splitIsMeasuring ? "Terminar ruta" : "Trazar ruta"}
             >
               <img
-                src={
-                  splitIsMeasuring
-                    ? `${process.env.PUBLIC_URL}/rutac.png`
-                    : `${process.env.PUBLIC_URL}/rutabw.png`
-                }
+                src={`${process.env.PUBLIC_URL}/rutabw.png`}
                 alt="Medir ruta"
                 className="button-icon"
-                style={buttonIconStyle}
               />
             </button>
 
@@ -3072,22 +2958,12 @@ const fixEncoding = (text: any): string => {
                   : "Medir línea recta"
               }
               aria-label="Medir línea recta"
-              style={controlButtonStyle}
+              aria-pressed={splitIsMeasuringLine}
+              data-label={
+                splitIsMeasuringLine ? "Terminar línea" : "Trazar línea"
+              }
             >
-              <div
-                className="button-icon"
-                style={{
-                  ...buttonIconStyle,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "16px",
-                  fontWeight: "bold",
-                  color: splitIsMeasuringLine ? "#007cbf" : "#6c757d",
-                }}
-              >
-                ⟷
-              </div>
+              <div className="button-icon button-icon--glyph">⟷</div>
             </button>
 
             <button
@@ -3095,13 +2971,13 @@ const fixEncoding = (text: any): string => {
               onClick={toggleSplit3D}
               title={splitIs3D ? "Desactivar vista 3D" : "Activar vista 3D"}
               aria-label="Vista 3D"
-              style={controlButtonStyle}
+              aria-pressed={splitIs3D}
+              data-label={splitIs3D ? "Desactivar 3D" : "Vista 3D"}
             >
               <img
                 src={get3DIcon(splitIs3D)}
                 alt="Vista 3D"
                 className="button-icon"
-                style={buttonIconStyle}
               />
             </button>
 
@@ -3111,13 +2987,9 @@ const fixEncoding = (text: any): string => {
               onClick={splitResetNorth}
               title="Restaurar norte"
               aria-label="Brújula: restablecer norte"
-              style={{ ...controlButtonStyle, padding: 0 }}
+              data-label="Restaurar norte"
             >
-              <svg
-                viewBox="0 0 100 100"
-                className="compass-svg"
-                style={{ display: "block", width: "100%", height: "100%" }}
-              >
+              <svg viewBox="0 0 100 100" className="compass-svg">
                 <circle
                   cx="50"
                   cy="50"
@@ -3161,18 +3033,7 @@ const fixEncoding = (text: any): string => {
           {/* Minimapa del mapa secundario */}
           <div
             ref={splitMinimapContainerRef}
-            style={{
-              position: "absolute",
-              bottom: "20px",
-              left: "20px",
-              width: "200px",
-              height: "150px",
-              border: "2px solid #007cbf",
-              borderRadius: "8px",
-              overflow: "hidden",
-              boxShadow: "0 4px 8px rgba(0,0,0,0.2)",
-              zIndex: 10,
-            }}
+            className="minimap-container"
           />
 
           {/* InfoBox del mapa secundario */}

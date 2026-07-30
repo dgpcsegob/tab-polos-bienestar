@@ -8,3 +8,5 @@ yarn-error.log*
 Thumbs.db
 .claude/
 .vscode/
+deploy_ghpages_api.js
+push_via_api.js

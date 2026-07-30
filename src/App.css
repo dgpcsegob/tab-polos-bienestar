@@ -85,32 +85,176 @@
 
 /* ===========================
    Botones de control del mapa
+   Barra flotante con vidrio esmerilado
    =========================== */
+.map-control-stack {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.74) 0%, rgba(255, 255, 255, 0.58) 100%);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  box-shadow:
+    0 12px 32px rgba(97, 18, 50, 0.16),
+    0 2px 6px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
 .map-control-button {
-  background-color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 14px;
-  cursor: pointer;
+  position: relative;
   width: 42px;
   height: 42px;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform .2s ease, filter .2s ease;
+  border: 1px solid rgba(155, 34, 71, 0.1);
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #f6f2f3 100%);
+  color: #611232;
+  cursor: pointer;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 #ffffff;
+  transition:
+    transform .18s cubic-bezier(.22, .85, .25, 1),
+    box-shadow .18s ease,
+    background .18s ease,
+    border-color .18s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .map-control-button:hover {
   transform: translateY(-2px);
-  filter: brightness(1.02);
+  border-color: rgba(155, 34, 71, 0.28);
+  box-shadow:
+    0 8px 18px rgba(97, 18, 50, 0.18),
+    inset 0 1px 0 #ffffff;
 }
 
 .map-control-button:active {
-  transform: translateY(0) scale(.96);
+  transform: translateY(0) scale(.94);
+  box-shadow: inset 0 2px 5px rgba(97, 18, 50, 0.18);
 }
 
-.button-icon {
-  width: 20px;
-  height: 20px;
+.map-control-button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(155, 34, 71, 0.28),
+    0 8px 18px rgba(97, 18, 50, 0.18);
+}
+
+/* Estado activo: relleno guinda con anillo que respira */
+.map-control-button.active {
+  background: linear-gradient(160deg, #9b2247 0%, #611232 100%);
+  border-color: rgba(97, 18, 50, 0.55);
+  color: #ffffff;
+  box-shadow:
+    0 8px 20px rgba(155, 34, 71, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.map-control-button.active::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 17px;
+  border: 2px solid rgba(155, 34, 71, 0.45);
+  pointer-events: none;
+  animation: mcb-ring 2.2s ease-out infinite;
+}
+
+@keyframes mcb-ring {
+  0% {
+    opacity: .65;
+    transform: scale(.94);
+  }
+  70%, 100% {
+    opacity: 0;
+    transform: scale(1.14);
+  }
+}
+
+/* Iconos: se tiñen por CSS, no por variantes de archivo */
+.map-control-button .button-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+
+.map-control-button img.button-icon {
+  filter: brightness(0) saturate(0);
+  opacity: .62;
+  transition: filter .18s ease, opacity .18s ease;
+}
+
+.map-control-button:hover img.button-icon {
+  opacity: .88;
+}
+
+.map-control-button.active img.button-icon {
+  filter: brightness(0) invert(1);
+  opacity: 1;
+}
+
+/* Icono tipográfico (⟷) hereda el color del botón */
+.button-icon--glyph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  color: currentColor;
+}
+
+.compass-btn .compass-svg {
+  width: 26px;
+  height: 26px;
+  display: block;
+}
+
+/* Etiqueta flotante al pasar el cursor */
+.map-control-button[data-label]::before {
+  content: attr(data-label);
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%) translateX(6px);
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: rgba(48, 14, 26, 0.92);
+  color: #ffffff;
+  font: 600 11px/1.2 'Montserrat', system-ui, sans-serif;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.22);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.map-control-button:hover[data-label]::before,
+.map-control-button:focus-visible[data-label]::before {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-control-button,
+  .map-control-button[data-label]::before {
+    transition: none;
+  }
+  .map-control-button.active::after {
+    animation: none;
+  }
 }
 
 /* ===========================
