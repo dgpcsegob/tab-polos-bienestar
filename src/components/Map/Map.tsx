@@ -9,10 +9,52 @@ import { Protocol } from "pmtiles";
 import type { Feature, Point, Geometry, Polygon } from "geojson";
 import "maplibre-gl/dist/maplibre-gl.css";
 import InfoBox, { InfoBoxSection } from "../InfoBox/InfoBox";
+import SedesPanel from "../SedesPanel/SedesPanel";
+import { SEDES_LGPI, SedeLGPI } from "../../data/sedesLGPI";
+import {
+  TIPO_ASAMBLEA,
+  TIPO_MESA,
+  SEDE_COLORS,
+  sedeColor,
+  sedeIconSvg,
+  sedePinSvg,
+  sedePinImageId,
+} from "../../data/sedeIcons";
 
 type MapProps = {
   layersVisibility: { [layerId: string]: boolean };
 };
+
+// Estado del tooltip flotante de un mapa: su popup, los handlers registrados
+// (para poder retirarlos exactamente) y sobre qué se está pasando el cursor.
+type HoverState = {
+  popup: maplibregl.Popup;
+  onMapMouseMove: ((e: maplibregl.MapMouseEvent) => void) | null;
+  onMapMoveZoom: () => void;
+  onCanvasLeave: () => void;
+  hovering: boolean;
+  lngLat: maplibregl.LngLat | null;
+  /** Firma del conjunto de features bajo el cursor, para no rearmar el HTML */
+  lastId: string | number | null;
+  /** Clase de tono aplicada al popup por el feature actual */
+  claseTono: string | null;
+};
+
+// Capa que aporta una ficha al mosaico del tooltip
+type TooltipCapa = {
+  layerId: string;
+  /** Encabezado de la ficha; las sedes traen el suyo dentro del HTML */
+  titulo: string | null;
+  html: (props: any) => string;
+  clase?: (props: any) => string | null;
+  /** Color del filo de la ficha dentro del mosaico */
+  acento?: (props: any) => string;
+  /** Identidad del dato, para no repetir fichas del mismo elemento */
+  clave: (f: any) => string;
+};
+
+// Tope de fichas simultáneas: más allá el mosaico se vuelve ilegible
+const MAX_FICHAS_HOVER = 4;
 
 interface RouteData {
   id: number;
@@ -29,108 +71,248 @@ const get3DIcon = (isOn: boolean) => {
   return `data:image/svg+xml;base64,${btoa(svg)}`;
 };
 
-// Centro de la extensión del pmtiles poligono_polo_QR
-const POLO_QR_CENTROID: [number, number] = [-86.9532875, 20.8698405];
+// === Sedes de Asambleas y Mesas de Trabajo (LGPI) ===
+// El pmtiles de origen trae las geometrías colapsadas en un solo punto sobre el
+// Pacífico, así que los puntos se arman aquí con Lat_Sede / Long_Sede.
+const SEDES_SOURCE = "sedes_lgpi";
+const SEDES_LAYERS = ["sedes_lgpi"];
+const SEDES_TOGGLE_ID = "sedesLGPI";
+const SEDE_FLY_ZOOM = 16;
 
-// El pmtiles de Quintana Roo sólo trae Id/Nombre, así que los datos que se
-// muestran en la etiqueta se definen aquí.
-const POLO_QR_INFO = {
-  podebis: "Quintana Roo",
-  entidad: "Quintana Roo",
-  publicacion: "27 de julio de 2026",
+// Elige la imagen del pin (ya rasterizada vía map.addImage) según el tipo
+const SEDE_ICON_MATCH: any = [
+  "match",
+  ["get", "tipo"],
+  TIPO_ASAMBLEA,
+  sedePinImageId(TIPO_ASAMBLEA),
+  TIPO_MESA,
+  sedePinImageId(TIPO_MESA),
+  sedePinImageId(TIPO_ASAMBLEA),
+];
+
+const sedesFeatureCollection = () =>
+  ({
+    type: "FeatureCollection",
+    features: SEDES_LGPI.map((s, i) => ({
+      type: "Feature",
+      // "NO." se repite entre registros, así que el filtrado usa el índice
+      id: i,
+      geometry: { type: "Point", coordinates: [s.lon, s.lat] },
+      properties: { ...s, uid: i },
+    })),
+  }) as any;
+
+const escapeHtml = (v: any) =>
+  String(v ?? "").replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c] as string,
+  );
+
+const ICONO_CALENDARIO = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>`;
+// "Monito" de Street View
+const ICONO_PEGMAN = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="4.5" r="2.5"/><path d="M8.5 21v-5.5H7V11a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4.5h-1.5V21"/></svg>`;
+const ICONO_PIN = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`;
+
+// El borde izquierdo se pinta en .maplibregl-popup-content, que está por encima
+// de la ficha: una variable CSS declarada dentro no lo alcanza, así que el tono
+// del tipo de reunión viaja como clase del popup.
+const CLASE_POPUP_MESA = "ml-popup-mesa";
+const clasePopupSede = (props: any) =>
+  String(props?.tipo) === TIPO_MESA ? CLASE_POPUP_MESA : null;
+
+// Ficha compacta: tipo de reunión con ícono, entidad, municipio, fecha y dirección
+const buildSedeCard = (props: any) => {
+  const tipo = String(props.tipo ?? TIPO_ASAMBLEA);
+  const modificador = tipo === TIPO_MESA ? " sede-card--mesa" : "";
+  return `<div class="sede-card${modificador}" style="--sede-color:${sedeColor(tipo)}">
+      <div class="sede-tipo">${sedeIconSvg(tipo, 15, "currentColor")}<span>${escapeHtml(tipo)}</span></div>
+      <div class="sede-municipio">${escapeHtml(props.sede)}</div>
+      <div class="sede-entidad">${escapeHtml(props.entidad)}</div>
+      <div class="sede-dato"><span class="sede-ico">${ICONO_CALENDARIO}</span>${escapeHtml(props.fecha)}</div>
+      <div class="sede-dato"><span class="sede-ico">${ICONO_PIN}</span><span>${escapeHtml(props.direccion)}</span></div>
+    </div>`;
 };
 
-// PODEBIS excluidos de polos7 / centroides_polos7 (se identifican por "layer")
-const POLOS_EXCLUIDOS = ["Parque Hidalgo"];
-const FILTRO_POLOS_EXCLUIDOS = [
-  "!",
-  ["in", ["get", "layer"], ["literal", POLOS_EXCLUIDOS]],
-] as any;
+// Tamaño lógico del pin de sede a icon-size 1 (coincide con el viewBox de
+// sedePinSvg). El ancla del icono es su punta inferior, así que el pin entero
+// "cuelga" hacia arriba desde la coordenada de la sede.
+const PIN_LOGICAL_W = 34;
+const PIN_LOGICAL_H = 46;
+// Escalón de resalte al pasar el cursor sobre un pin
+const PIN_HOVER_SCALE = 1.18;
 
-// === Capas de centroides (pulso, click-para-acercar, visibilidad conjunta) ===
-// Registrar aquí una capa nueva la habilita en el mapa principal y en el dividido.
-const CENTROID_PULSE_LAYERS = [
-  "polosCentroides-pulse",
-  "SJC_centroides-pulse",
-  "cent_polos_topo-pulse",
-  "cent_podebis_Tab_Oax_Tlaxc-pulse",
-  "cent_poligono_polo_QR-pulse",
+// Paradas de la interpolación de icon-size de la capa "sedes_lgpi": deben
+// coincidir para poder calcular en JS cuánto ocupa el pin en píxeles a un
+// zoom dado (y así separar el tooltip del cuerpo del pin).
+const SEDE_ICON_SIZE_STOPS: [number, number][] = [
+  [4, 0.55],
+  [10, 0.78],
+  [14, 0.95],
+  [18, 1.15],
 ];
 
-const CENTROID_CLICK_LAYERS = [
-  "polosCentroides",
-  "polosCentroides-pulse",
-  "SJC_centroides",
-  "SJC_centroides-pulse",
-  "cent_polos_topo",
-  "cent_polos_topo-pulse",
-  "cent_podebis_Tab_Oax_Tlaxc",
-  "cent_podebis_Tab_Oax_Tlaxc-pulse",
-  "cent_poligono_polo_QR",
-  "cent_poligono_polo_QR-pulse",
+const sedeIconScaleAtZoom = (zoom: number) => {
+  const stops = SEDE_ICON_SIZE_STOPS;
+  if (zoom <= stops[0][0]) return stops[0][1];
+  const last = stops[stops.length - 1];
+  if (zoom >= last[0]) return last[1];
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [z0, s0] = stops[i];
+    const [z1, s1] = stops[i + 1];
+    if (zoom >= z0 && zoom <= z1) return s0 + (s1 - s0) * ((zoom - z0) / (z1 - z0));
+  }
+  return last[1];
+};
+
+// El estilo sólo permite que "zoom" sea la entrada directa de un
+// "interpolate"/"step" de nivel superior: no se puede envolver ese
+// interpolate en otra expresión (p.ej. "*") para aplicarle el factor de
+// hover. En cambio, cada parada de zoom lleva su propio "case".
+// Ojo: "feature-state" no está soportado en propiedades layout (icon-size lo
+// es), así que el hover viaja como propiedad normal del GeoJSON —se
+// alterna con setSedeHover()— y se lee con ["get", "hover"], no
+// ["feature-state", "hover"].
+const SEDE_ICON_SIZE_EXPR: any = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  ...SEDE_ICON_SIZE_STOPS.flatMap(([zoom, size]) => [
+    zoom,
+    [
+      "case",
+      ["boolean", ["get", "hover"], false],
+      size * PIN_HOVER_SCALE,
+      size,
+    ],
+  ]),
 ];
 
-// Polígonos + centroides que acompañan al toggle de "polosBienestar"
-const PODEBIS_LAYERS = [
-  "polosBienestar",
-  "polosCentroides",
-  "polosCentroides-pulse",
-  "SJC_Pue",
-  "SJC_centroides",
-  "SJC_centroides-pulse",
-  "polos_topo",
-  "cent_polos_topo",
-  "cent_polos_topo-pulse",
-  "podebis_Tab_Oax_Tlaxc",
-  "cent_podebis_Tab_Oax_Tlaxc",
-  "cent_podebis_Tab_Oax_Tlaxc-pulse",
-  "poligono_polo_QR",
-  "cent_poligono_polo_QR",
-  "cent_poligono_polo_QR-pulse",
+// Offset del popup por ancla: mantiene el tooltip / ficha siempre por encima
+// (o a un lado, sin traslape) del cuerpo del pin, que crece hacia arriba
+// desde el punto de la sede.
+const sedePopupOffset = (
+  zoom: number,
+  gap = 6,
+): { [key in maplibregl.PositionAnchor]: [number, number] } => {
+  const scale = sedeIconScaleAtZoom(zoom);
+  const w = PIN_LOGICAL_W * scale;
+  const h = PIN_LOGICAL_H * scale;
+  return {
+    center: [0, -h / 2],
+    top: [0, gap],
+    "top-left": [gap, gap],
+    "top-right": [-gap, gap],
+    bottom: [0, -(h + gap)],
+    "bottom-left": [w / 2 + gap, -(h + gap)],
+    "bottom-right": [-(w / 2 + gap), -(h + gap)],
+    left: [w / 2 + gap, -h / 2],
+    right: [-(w / 2 + gap), -h / 2],
+  };
+};
+
+// Radio que crece con el zoom: con un valor fijo el punto conserva su tamaño en
+// píxeles mientras el mapa se agranda, y se percibe cada vez más chico.
+const radioPorZoom = (
+  base: number,
+  medio: number,
+  alto: number,
+  maximo: number,
+): any => [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  4,
+  base,
+  8,
+  medio,
+  12,
+  alto,
+  16,
+  maximo,
 ];
 
-// Aplica el pulso compartido a todas las capas de centroides registradas
-const applyCentroidPulse = (
+// Registra las imágenes del pin de sede bajo demanda: MapLibre dispara
+// "styleimagemissing" la primera vez que una capa symbol referencia un
+// icon-image aún no cargado, y de nuevo tras cada cambio de estilo (el
+// estilo nuevo no hereda las imágenes del anterior).
+const ensureSedeIconLoader = (
   map: MaplibreMap,
-  pulseRadius: number,
-  pulseOpacity: number,
+  attached: WeakSet<MaplibreMap>,
 ) => {
-  CENTROID_PULSE_LAYERS.forEach((layerId) => {
-    if (!map.getLayer(layerId)) return;
-    map.setPaintProperty(layerId, "circle-radius", pulseRadius);
-    map.setPaintProperty(layerId, "circle-opacity", pulseOpacity * 0.5);
+  if (attached.has(map)) return;
+  attached.add(map);
+  map.on("styleimagemissing", (e) => {
+    const { id } = e;
+    if (id !== sedePinImageId(TIPO_ASAMBLEA) && id !== sedePinImageId(TIPO_MESA))
+      return;
+    const tipo = id === sedePinImageId(TIPO_MESA) ? TIPO_MESA : TIPO_ASAMBLEA;
+    const img = new Image();
+    img.onload = () => {
+      if (!map.hasImage(id)) map.addImage(id, img, { pixelRatio: 2 });
+    };
+    img.src = `data:image/svg+xml;base64,${btoa(sedePinSvg(tipo))}`;
   });
 };
 
-// === Vuelo al hacer click en un centroide ===
-const POLO_FLY_ZOOM = 13;
+// Marca/desmarca la propiedad "hover" de una sede en su GeoJSON y reenvía los
+// datos a la fuente: icon-size (layout) no admite feature-state, así que el
+// resalte al pasar el cursor viaja como propiedad normal (["get","hover"]).
+// El índice del arreglo coincide con el "id" de cada feature (ver
+// sedesFeatureCollection), así que se accede directo sin buscar.
+const setSedeHover = (
+  map: MaplibreMap,
+  hoverIdRef: WeakMap<MaplibreMap, number | null>,
+  dataRef: WeakMap<MaplibreMap, GeoJSON.FeatureCollection>,
+  newId: number | null,
+) => {
+  const prevId = hoverIdRef.get(map) ?? null;
+  if (prevId === newId) return;
+  hoverIdRef.set(map, newId);
+
+  const data = dataRef.get(map);
+  const source = map.getSource(SEDES_SOURCE) as GeoJSONSource | undefined;
+  if (!data || !source) return;
+  if (prevId != null && data.features[prevId])
+    (data.features[prevId].properties as any).hover = false;
+  if (newId != null && data.features[newId])
+    (data.features[newId].properties as any).hover = true;
+  source.setData(data);
+};
+
 // Aceleración y frenado suaves; evita el arranque brusco del easing por omisión
 const easeInOutCubic = (t: number) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-// El polígono aparece y el centroide se apaga de forma gradual al cruzar el
-// umbral de zoom, en lugar de saltar de golpe a media animación.
-const POLIGONO_FADE_IN: any = [
-  "interpolate",
-  ["linear"],
-  ["zoom"],
-  11,
-  0,
-  11.9,
-  1,
-];
-const CENTROIDE_FADE_OUT: any = [
-  "interpolate",
-  ["linear"],
-  ["zoom"],
-  10.4,
-  1,
-  11,
-  0,
+// Hasta dónde se puede desplazar el visor. Tiene que CONTENER a MEXICO_VIEW:
+// si es más chico, MapLibre recorta el encuadre de arranque a este límite y
+// ampliar la vista no surte efecto.
+const MEXICO_BOUNDS: [[number, number], [number, number]] = [
+  [-125, 8],
+  [-79, 38],
 ];
 
-// Extensión de la república usada como límite del visor y del minimapa
-const MEXICO_BOUNDS: [[number, number], [number, number]] = [
+// Encuadre de arranque: el mapa se abre con fitBounds sobre esta extensión, no
+// con un zoom fijo, para que llene la pantalla sea cual sea el tamaño de la
+// ventana. Asoma el sur de Estados Unidos por arriba y Honduras por el sureste.
+const MEXICO_VIEW: [[number, number], [number, number]] = [
+  [-121, 12],
+  [-84, 34],
+];
+
+// Aire alrededor del encuadre inicial: deja respirar el panel de capas
+// (izquierda), el dock de herramientas (derecha) y el minimapa (abajo).
+const MEXICO_VIEW_PADDING = { top: 40, bottom: 70, left: 150, right: 140 };
+
+// El minimapa conserva un encuadre ceñido al país: si usara el límite de paneo
+// del visor, la república se vería diminuta dentro del recuadro.
+const MINIMAP_BOUNDS: [[number, number], [number, number]] = [
   [-120, 14],
   [-84, 33.5],
 ];
@@ -150,7 +332,7 @@ const EMPTY_FEATURES = {
 const addMinimapIndicatorLayers = (minimap: MaplibreMap) => {
   // Encuadra toda la república una sola vez; a partir de aquí el minimapa
   // ya no cambia de centro ni de zoom.
-  minimap.fitBounds(MEXICO_BOUNDS, { padding: 6, animate: false });
+  minimap.fitBounds(MINIMAP_BOUNDS, { padding: 6, animate: false });
 
   minimap.addSource("viewport-bounds", {
     type: "geojson",
@@ -275,28 +457,42 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const blinkAnimationId = useRef<number | null>(null);
   const routeIdCounter = useRef(0);
 
-  // Popup con clase para poder aplicar pointer-events:none desde CSS ('.ml-popup')
-  const popupRef = useRef(
-    new maplibregl.Popup({
-      closeButton: false,
-      closeOnClick: false,
-      className: "ml-popup",
-      offset: 8,
-    }),
-  );
-
-  // === Hover refs ===
-  const layerHandlersRef = useRef<
-    Record<string, { mouseenter: any; mousemove: any; mouseleave: any }>
-  >({});
-  const lastPointRef = useRef<{ x: number; y: number } | null>(null);
-  const lastLngLatRef = useRef<maplibregl.LngLat | null>(null);
-  const lastHoverIdRef = useRef<string | number | null>(null);
-  // Handler de click por instancia de mapa, para poder retirarlo al re-adjuntar
-  // (el mapa principal y el dividido tienen el suyo)
-  const centroidClickRef = useRef(
-    new WeakMap<MaplibreMap, (e: any) => void>(),
-  );
+  // === Hover: un estado completo por instancia de mapa ===
+  // El popup lleva la clase '.ml-popup' para el pointer-events:none del CSS.
+  const hoverStatesRef = useRef(new WeakMap<MaplibreMap, HoverState>());
+  // === Sedes LGPI ===
+  // Cada mapa tiene sus propios filtros: el principal y el dividido se manejan
+  // por separado para poder comparar dos selecciones lado a lado.
+  // null = sin filtro (las 89). Se guarda en refs para poder re-aplicarlo
+  // cuando el cambio de estilo (satelital / 3D) vuelve a crear las capas.
+  const sedesFilterRef = useRef<number[] | null>(null);
+  const sedesFilterSplitRef = useRef<number[] | null>(null);
+  const [sedesFiltradas, setSedesFiltradas] = useState<SedeLGPI[]>(SEDES_LGPI);
+  const [sedesFiltradasSplit, setSedesFiltradasSplit] =
+    useState<SedeLGPI[]>(SEDES_LGPI);
+  // Espejo del estado para los handlers del mapa, que se registran una sola vez
+  const sedesFiltradasRef = useRef<SedeLGPI[]>(SEDES_LGPI);
+  const sedesFiltradasSplitRef = useRef<SedeLGPI[]>(SEDES_LGPI);
+  // Distingue el cierre a mano (que devuelve la vista) del cierre por código
+  const cierreSilenciosoRef = useRef(false);
+  // El handler de click se registra una vez; el encuadre vigente llega por ref
+  const encuadrarSedesRef = useRef<
+    (map: MaplibreMap | null, sedes: SedeLGPI[]) => void
+  >(() => {});
+  // Ficha fija que abre el click sobre una sede, una por mapa
+  const sedeDetailRef = useRef(new WeakMap<MaplibreMap, maplibregl.Popup>());
+  // Handler de click por instancia de mapa (principal y dividido), para poder
+  // retirarlo al re-adjuntar los eventos tras un cambio de estilo
+  const sedeClickRef = useRef(new WeakMap<MaplibreMap, (e: any) => void>());
+  // Mapas que ya tienen el manejador de "styleimagemissing" de los pines
+  const sedeIconLoaderRef = useRef(new WeakSet<MaplibreMap>());
+  // uid de la sede actualmente resaltada (hover) por mapa
+  const sedeHoverIdRef = useRef(new WeakMap<MaplibreMap, number | null>());
+  // GeoJSON en uso por la fuente de sedes de cada mapa (para mutar "hover")
+  const sedesDataRef = useRef(new WeakMap<MaplibreMap, GeoJSON.FeatureCollection>());
+  // El primer render no debe reencuadrar: el mapa ya arranca sobre la república
+  const primerEncuadreRef = useRef(true);
+  const primerEncuadreSplitRef = useRef(true);
 
   // === Brújula ===
   const [displayBearing, setDisplayBearing] = useState(0);
@@ -337,6 +533,15 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const [currentLinePoints, setCurrentLinePoints] = useState<LngLatLike[]>([]);
   const [routesData, setRoutesData] = useState<RouteData[]>([]);
   const [linesData, setLinesData] = useState<RouteData[]>([]);
+
+  // Mediciones del mapa dividido, independientes de las del principal
+  const [splitCurrentPoints, setSplitCurrentPoints] = useState<LngLatLike[]>([]);
+  const [splitCurrentLinePoints, setSplitCurrentLinePoints] = useState<
+    LngLatLike[]
+  >([]);
+  const [splitRoutesData, setSplitRoutesData] = useState<RouteData[]>([]);
+  const [splitLinesData, setSplitLinesData] = useState<RouteData[]>([]);
+
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [mapView, setMapView] = useState<number>(0); // Solo setMapView se usa para forzar re-renders
 
@@ -344,35 +549,14 @@ const Map: React.FC<MapProps> = ({ layersVisibility }) => {
   const isMeasuringLineRef = useRef(isMeasuringLine);
   isMeasuringRef.current = isMeasuring;
   isMeasuringLineRef.current = isMeasuringLine;
+  const splitIsMeasuringRef = useRef(splitIsMeasuring);
+  const splitIsMeasuringLineRef = useRef(splitIsMeasuringLine);
+  splitIsMeasuringRef.current = splitIsMeasuring;
+  splitIsMeasuringLineRef.current = splitIsMeasuringLine;
 
-const fixEncoding = (text: any): string => {
-  if (text === null || text === undefined) return "";
-  if (typeof text !== "string") return String(text);
-  if (!text) return text;
-
-  // 1. Si hay �, forzamos cambiar por í (como pediste)
-  if (text.includes("�")) {
-    text = text.replace(/\uFFFD/g, "í");
-  }
-
-  // 2. Reemplazar patrones típicos de UTF‑8 mal decodificado como Latin‑1
-  // Ejemplos frecuentes en tiles:
-  text = text
-    .replace(/Ã³/g, "ó")
-    .replace(/Ã©/g, "é")
-    .replace(/Ã¡/g, "á")
-    .replace(/Ãº/g, "ú")
-    .replace(/Ã¼/g, "ü")
-    .replace(/Ã±/g, "ñ")
-    .replace(/ÃÂ³/g, "ó") // por si viene doble
-    .replace(/ÃÂ¡/g, "á")
-    .replace(/ÃÂº/g, "ú");
-
-  return text;
-};
-
-  const clearCurrentPoints = useCallback(() => {
-    const map = mapRef.current;
+  // Todas las funciones de medición reciben el mapa: el principal y el dividido
+  // corren el mismo circuito con estados separados.
+  const clearCurrentPoints = useCallback((map: MaplibreMap | null) => {
     if (!map) return;
     const layers = [
       "start-point-current",
@@ -520,11 +704,15 @@ const fixEncoding = (text: any): string => {
     [],
   );
 
-  const clearAllRoutes = useCallback(() => {
-    const map = mapRef.current;
-    if (!map) return;
+  const borrarMediciones = useCallback(
+    (
+      map: MaplibreMap | null,
+      routesData: RouteData[],
+      linesData: RouteData[],
+    ) => {
+      if (!map) return;
 
-    routesData.forEach((route) => {
+      routesData.forEach((route) => {
       const { id } = route;
       if (map.getLayer(`route-layer-${id}`))
         map.removeLayer(`route-layer-${id}`);
@@ -550,310 +738,337 @@ const fixEncoding = (text: any): string => {
       if (map.getLayer(`end-line-point-${id}`))
         map.removeLayer(`end-line-point-${id}`);
       if (map.getSource(`end-line-point-${id}`))
-        map.removeSource(`end-line-point-${id}`);
-    });
+          map.removeSource(`end-line-point-${id}`);
+      });
 
+      clearCurrentPoints(map);
+    },
+    [clearCurrentPoints],
+  );
+
+  const clearAllRoutes = useCallback(() => {
+    borrarMediciones(mapRef.current, routesData, linesData);
     setRoutesData([]);
     setLinesData([]);
-    clearCurrentPoints();
-  }, [routesData, linesData, clearCurrentPoints]);
+  }, [routesData, linesData, borrarMediciones]);
+
+  const clearAllRoutesSplit = useCallback(() => {
+    borrarMediciones(splitMapRef.current, splitRoutesData, splitLinesData);
+    setSplitRoutesData([]);
+    setSplitLinesData([]);
+  }, [splitRoutesData, splitLinesData, borrarMediciones]);
 
   const attachAllTooltipEvents = useCallback((map: MaplibreMap) => {
-    // Popup persistente (no se cierra en pan/zoom)
-    if (!popupRef.current) {
-      popupRef.current = new maplibregl.Popup({
+    // Todo el estado del hover vive por instancia de mapa. Cuando era
+    // compartido, re-adjuntar los eventos (cambio de estilo, apertura de la
+    // vista dividida) dejaba listeners viejos vivos: cada cierre tenía su
+    // propio "hovering" y la etiqueta se quedaba clavada donde estuviera.
+    const previo = hoverStatesRef.current.get(map);
+    if (previo) {
+      if (previo.onMapMouseMove) map.off("mousemove", previo.onMapMouseMove);
+      map.off("move", previo.onMapMoveZoom);
+      map.off("zoom", previo.onMapMoveZoom);
+      map.getCanvas().removeEventListener("mouseleave", previo.onCanvasLeave);
+      previo.popup.remove();
+    }
+    // El source se recrea en cada cambio de estilo: cualquier feature-state
+    // que se recuerde de antes ya no aplica al source nuevo
+    sedeHoverIdRef.current.delete(map);
+
+    // Un popup por mapa: uno compartido se arrancaría del otro al mostrarse
+    const popup =
+      previo?.popup ??
+      new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
         className: "ml-popup",
         offset: 8,
+        // Ancho suficiente para el mosaico de dos columnas
+        maxWidth: "none",
       });
-    }
-    const popup = popupRef.current;
 
-    // Estado de hover real sobre alguna capa con tooltip
-    let hoveringFeature = false;
-    let rafId: number | null = null;
+    const estado: HoverState = {
+      popup,
+      hovering: false,
+      lngLat: null,
+      lastId: null,
+      claseTono: null,
+      onMapMoveZoom: () => {},
+      onCanvasLeave: () => {},
+      onMapMouseMove: null,
+    };
+    hoverStatesRef.current.set(map, estado);
 
-    const schedulePopupMove = () => {
-      if (rafId != null) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        if (hoveringFeature && lastLngLatRef.current) {
-          popup.setLngLat(lastLngLatRef.current);
-        }
-      });
+    // Ojo: addClassName no hace nada si el popup aún no está montado, y su
+    // contenedor se recrea en cada addTo. Por eso la clase se reafirma siempre
+    // —después de montarlo— en vez de sólo cuando cambia de tipo.
+    const aplicarClase = (clase: string | null) => {
+      if (estado.claseTono && estado.claseTono !== clase) {
+        popup.removeClassName(estado.claseTono);
+      }
+      estado.claseTono = clase;
+      if (clase) popup.addClassName(clase);
     };
 
-    // Limpia handlers previos si re-adjuntamos
-    Object.entries(layerHandlersRef.current).forEach(([layerId, h]) => {
-      map.off("mouseenter", layerId, h.mouseenter);
-      map.off("mousemove", layerId, h.mousemove);
-      map.off("mouseleave", layerId, h.mouseleave);
+    // === Registro de capas con tooltip ===
+    // Un solo manejador consulta todo lo que hay bajo el cursor, en vez de un
+    // juego de eventos por capa: así se pueden mostrar varias fichas a la vez.
+    const capasTooltip: TooltipCapa[] = [
+      ...["regiones_zona1", "regiones_zona2"].map((layerId) => ({
+        layerId,
+        titulo: "Región de Paz",
+        html: (props: any) =>
+          `<strong>Entidad:</strong> ${props._NOM_ENT ?? props.NOM_ENT ?? "N/A"}<br/>
+           <strong>Municipio:</strong> ${props.NOMGEO ?? props.NOM_MUN ?? "N/A"}<br/>
+           <strong>Región:</strong> ${props._REGION ?? "N/A"}<br/>
+           <strong>Nombre:</strong> ${props._NOM_REGION ?? "N/A"}`,
+        clave: (f: any) =>
+          `region-${f.properties?._REGION ?? ""}-${f.properties?.NOMGEO ?? ""}`,
+      })),
+      {
+        layerId: "PresidenciasMunicipales",
+        titulo: "Cabecera Municipal",
+        html: (props: any) =>
+          `<strong>Entidad:</strong> ${props.NOM_ENT ?? props.entidad ?? ""}<br/>
+           <strong>Municipio:</strong> ${props.NOM_MUN ?? props.municipio ?? ""}<br/>
+           <strong>Dirección:</strong> ${props.direccion ?? ""}`,
+        clave: (f: any) =>
+          `presidencia-${f.id ?? f.properties?.NOM_MUN ?? ""}`,
+      },
+      {
+        layerId: "LocalidadesSedeINPI",
+        titulo: "Pueblo Indígena",
+        html: (props: any) =>
+          `<strong>Entidad:</strong> ${props.NOM_ENT ?? ""}<br/>
+           <strong>Municipio:</strong> ${props.NOM_MUN ?? ""}<br/>
+           <strong>Localidad:</strong> ${props.NOM_LOC ?? ""}<br/>
+           <strong>Pueblo:</strong> ${props.Pueblo ?? ""}`,
+        clave: (f: any) => `inpi-${f.id ?? f.properties?.NOM_LOC ?? ""}`,
+      },
+      // El punto y su halo son dos capas del mismo dato: la clave las unifica
+      ...SEDES_LAYERS.map((layerId) => ({
+        layerId,
+        titulo: null,
+        html: (props: any) => buildSedeCard(props),
+        clase: clasePopupSede,
+        acento: (props: any) => sedeColor(String(props?.tipo)),
+        clave: (f: any) => `sede-${f.properties?.uid}`,
+      })),
+    ];
+
+    // Objeto plano y no un Map: el nombre Map lo ocupa este componente
+    const porCapa: Record<string, TooltipCapa> = {};
+    capasTooltip.forEach((c) => {
+      porCapa[c.layerId] = c;
     });
-    layerHandlersRef.current = {};
 
-    const ensureLayerHover = (
-      layerId: string,
-      htmlBuilder: (props: any) => string,
-      idGetter?: (f: any) => string | number,
-    ) => {
-      const onEnter = (e: maplibregl.MapMouseEvent & { features?: any[] }) => {
-        if (!e.features?.length) return;
-        map.getCanvas().style.cursor = "pointer";
+    // Cada mapa tiene su propio modo de medición
+    const midiendo = () =>
+      map === splitMapRef.current
+        ? splitIsMeasuringRef.current || splitIsMeasuringLineRef.current
+        : isMeasuringRef.current || isMeasuringLineRef.current;
 
-        const feat = e.features[0];
-        const props = feat.properties ?? {};
-        const id = idGetter
-          ? idGetter(feat)
-          : (feat.id ??
-            props._ID ??
-            props.id ??
-            `${props._NOM_REGION ?? ""}-${props.NOMGEO ?? ""}`);
+    // Al medir, el cursor es una cruz: el tooltip no debe pisarla, porque
+    // ocultar() ahora corre en cada movimiento sobre zona vacía.
+    const cursorEnReposo = () => (midiendo() ? "crosshair" : "");
 
-        if (lastHoverIdRef.current !== id) {
-          lastHoverIdRef.current = id;
-          popup.setHTML(htmlBuilder(props));
-        }
-
-        lastPointRef.current = { x: e.point.x, y: e.point.y };
-        lastLngLatRef.current = e.lngLat;
-
-        // Mostrar/asegurar popup
-        if (!(popup as any)._container) popup.addTo(map);
-        popup.setLngLat(e.lngLat);
-
-        hoveringFeature = true;
-        schedulePopupMove();
-      };
-
-      const onMove = (e: maplibregl.MapMouseEvent & { features?: any[] }) => {
-        if (!e.features?.length) return;
-
-        const feat = e.features[0];
-        const props = feat.properties ?? {};
-        const id = idGetter
-          ? idGetter(feat)
-          : (feat.id ??
-            props._ID ??
-            props.id ??
-            `${props._NOM_REGION ?? ""}-${props.NOMGEO ?? ""}`);
-
-        if (lastHoverIdRef.current !== id) {
-          lastHoverIdRef.current = id;
-          popup.setHTML(htmlBuilder(props));
-        }
-
-        lastPointRef.current = { x: e.point.x, y: e.point.y };
-        lastLngLatRef.current = e.lngLat;
-
-        if (!(popup as any)._container) popup.addTo(map);
-        schedulePopupMove();
-      };
-
-      const onLeave = () => {
-        map.getCanvas().style.cursor = "";
-        lastHoverIdRef.current = null;
-        lastPointRef.current = null;
-        lastLngLatRef.current = null;
-        hoveringFeature = false;
-        popup.remove();
-      };
-
-      map.on("mouseenter", layerId, onEnter);
-      map.on("mousemove", layerId, onMove);
-      map.on("mouseleave", layerId, onLeave);
-
-      layerHandlersRef.current[layerId] = {
-        mouseenter: onEnter,
-        mousemove: onMove,
-        mouseleave: onLeave,
-      };
+    const ocultar = () => {
+      map.getCanvas().style.cursor = cursorEnReposo();
+      estado.hovering = false;
+      estado.lngLat = null;
+      estado.lastId = null;
+      aplicarClase(null);
+      popup.remove();
+      setSedeHover(map, sedeHoverIdRef.current, sedesDataRef.current, null);
     };
 
-    // 🔧 IMPORTANTE: ya NO cerramos el popup en movestart/zoomstart
-    // En su lugar, lo reposicionamos suavemente durante los movimientos
-    const onMapMoveZoom = () => {
-      if (!hoveringFeature) return;
-      schedulePopupMove();
+    estado.onMapMouseMove = (e: maplibregl.MapMouseEvent) => {
+      const ids = capasTooltip
+        .map((c) => c.layerId)
+        .filter((id) => map.getLayer(id));
+      if (!ids.length) return ocultar();
+
+      // queryRenderedFeatures respeta la visibilidad y los filtros vigentes
+      const encontrados = map.queryRenderedFeatures(e.point, { layers: ids });
+      if (!encontrados.length) return ocultar();
+
+      // Una ficha por dato: se descartan los duplicados (punto + halo, o el
+      // mismo polígono partido entre teselas)
+      const vistos = new Set<string>();
+      const fichas: string[] = [];
+      let clase: string | null = null;
+      // Feature de sede bajo el cursor (si hay), para resaltar su pin y
+      // separar el tooltip del cuerpo del pin
+      let sedeFeature: any = null;
+
+      for (const f of encontrados) {
+        const capa = porCapa[f.layer.id];
+        if (!capa) continue;
+        const clave = capa.clave(f);
+        if (vistos.has(clave)) continue;
+        vistos.add(clave);
+        if (SEDES_LAYERS.includes(f.layer.id) && !sedeFeature) sedeFeature = f;
+        if (fichas.length >= MAX_FICHAS_HOVER) continue;
+
+        const props = f.properties ?? {};
+        clase = clase ?? capa.clase?.(props) ?? null;
+        const acento = capa.acento?.(props);
+        fichas.push(
+          `<div class="tt-item"${acento ? ` style="--tt-acento:${acento}"` : ""}>${
+            capa.titulo ? `<div class="tt-item-tipo">${capa.titulo}</div>` : ""
+          }${capa.html(props)}</div>`,
+        );
+      }
+
+      if (!fichas.length) return ocultar();
+
+      setSedeHover(
+        map,
+        sedeHoverIdRef.current,
+        sedesDataRef.current,
+        sedeFeature ? (sedeFeature.id as number) : null,
+      );
+      popup.setOffset(sedeFeature ? sedePopupOffset(map.getZoom()) : 8);
+
+      const ocultas = vistos.size - fichas.length;
+      const firma = Array.from(vistos).join("|");
+
+      map.getCanvas().style.cursor = cursorEnReposo() || "pointer";
+
+      // Sólo se reconstruye el HTML si cambió el conjunto bajo el cursor
+      if (estado.lastId !== firma) {
+        estado.lastId = firma;
+        popup.setHTML(
+          `<div class="tt-mosaico" data-n="${fichas.length}">${fichas.join("")}${
+            ocultas > 0
+              ? `<div class="tt-mas">+${ocultas} más en este punto</div>`
+              : ""
+          }</div>`,
+        );
+      }
+
+      estado.hovering = true;
+      estado.lngLat = e.lngLat;
+      // Posicionar en el acto: diferirlo a un requestAnimationFrame era lo
+      // que dejaba la etiqueta rezagada respecto del cursor.
+      popup.setLngLat(e.lngLat);
+      if (!popup.isOpen()) popup.addTo(map);
+      // Ya montado: hasta aquí no existe el contenedor que recibe la clase.
+      // Con varias fichas el tono se deja neutro; cada una lleva el suyo.
+      aplicarClase(fichas.length === 1 ? clase : null);
     };
-    map.off("move", onMapMoveZoom);
-    map.off("zoom", onMapMoveZoom);
-    map.on("move", onMapMoveZoom);
-    map.on("zoom", onMapMoveZoom);
+    map.on("mousemove", estado.onMapMouseMove);
+
+    // El popup no se cierra al desplazar o hacer zoom: sigue anclado a su punto
+    estado.onMapMoveZoom = () => {
+      if (!estado.hovering || !estado.lngLat) return;
+      // El pin cambia de tamaño con el zoom: el offset se recalcula para
+      // seguir despegado de su cuerpo mientras se hace scroll-zoom en hover
+      if (sedeHoverIdRef.current.get(map) != null) {
+        popup.setOffset(sedePopupOffset(map.getZoom()));
+      }
+      popup.setLngLat(estado.lngLat);
+    };
+    map.on("move", estado.onMapMoveZoom);
+    map.on("zoom", estado.onMapMoveZoom);
 
     // Si el mouse sale del canvas, cerramos el popup
-    const canvasEl = map.getCanvas();
-    const onCanvasLeave = () => {
-      hoveringFeature = false;
-      popup.remove();
-    };
-    canvasEl.removeEventListener("mouseleave", onCanvasLeave);
-    canvasEl.addEventListener("mouseleave", onCanvasLeave);
+    estado.onCanvasLeave = ocultar;
+    map.getCanvas().addEventListener("mouseleave", estado.onCanvasLeave);
 
-    // === Tus capas con tooltip ===
-    ["regiones_zona1", "regiones_zona2"].forEach((layerId) => {
-      ensureLayerHover(
-        layerId,
-        (props) =>
-          `<div style="text-align:left;">
-         <strong>Región de Paz</strong><br/>
-         <strong>Entidad:</strong> ${props._NOM_ENT ?? props.NOM_ENT ?? "N/A"}<br/>
-         <strong>Municipio:</strong> ${props.NOMGEO ?? props.NOM_MUN ?? "N/A"}<br/>
-         <strong>Región:</strong> ${props._REGION ?? "N/A"}<br/>
-         <strong>Nombre:</strong> ${props._NOM_REGION ?? "N/A"}
-       </div>`,
-      );
-    });
 
-    ensureLayerHover(
-      "PresidenciasMunicipales",
-      (props) =>
-        `<strong>Entidad:</strong> ${props.NOM_ENT ?? props.entidad ?? ""}<br/>
-     <strong>Municipio:</strong> ${props.NOM_MUN ?? props.municipio ?? ""}<br/>
-     <strong>Dirección:</strong> ${props.direccion ?? ""}`,
-    );
+    // Qué sedes tiene filtradas el mapa sobre el que se está actuando
+    const sedesFiltradasDe = (m: MaplibreMap) =>
+      m === splitMapRef.current
+        ? sedesFiltradasSplitRef.current
+        : sedesFiltradasRef.current;
 
-    ensureLayerHover(
-      "LocalidadesSedeINPI",
-      (props) =>
-        `<strong>Entidad:</strong> ${props.NOM_ENT ?? ""}<br/>
-     <strong>Municipio:</strong> ${props.NOM_MUN ?? ""}<br/>
-     <strong>Localidad:</strong> ${props.NOM_LOC ?? ""}<br/>
-     <strong>Pueblo:</strong> ${props.Pueblo ?? ""}`,
-    );
-
-    ensureLayerHover(
-      "polosBienestar",
-      (props) =>
-        `<strong>PODEBIS:</strong> ${(props.layer ?? props.podebis)}<br/>
-     <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT)}<br/>
-     <strong>Publicación:</strong> ${(props.estatus)}`,
-    );
-
-    // Si usas centroides con tooltip:
-    ["polosCentroides", "polosCentroides-pulse"].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        ensureLayerHover(
-          layerId,
-          (props) =>
-            `<strong>PODEBIS:</strong> ${(props.layer ?? props.podebis)}<br/>
-         <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT)}<br/>
-         <strong>Publicación:</strong> ${(props.estatus)}`,
-        );
-      }
-    });
-
-    ensureLayerHover(
-      "SJC_Pue",
-      (props) =>
-        `<strong>PODEBIS:</strong> ${(props.layer ?? props.podebis) || "San José Chiapa"}<br/>
-     <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT) || "Puebla"}<br/>
-     <strong>Publicación:</strong> ${(props.estatus)}`,
-    );
-
-    ["SJC_centroides", "SJC_centroides-pulse"].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        ensureLayerHover(
-          layerId,
-          (props) =>
-            `<strong>PODEBIS:</strong> ${fixEncoding(props.layer)}<br/>
-         <strong>Entidad:</strong> ${(props.entidad ?? props.NOM_ENT) || "Puebla"}<br/>
-         <strong>Publicación:</strong> ${(props.estatus) || ""}`,
-        );
-      }
-    });
-
-    ensureLayerHover(
-      "polos_topo",
-      (props) =>
-        `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBI) || "PODEBI Topolobampo 1"}<br/>
-     <strong>Entidad:</strong> ${fixEncoding(props.Entidad ?? props.entidad) || "Sinaloa"}<br/>
-     <strong>Publicación:</strong> ${fixEncoding(props.Publicacion) || "20 de marzo de 2020"}`,
-    );
-
-    ["cent_polos_topo", "cent_polos_topo-pulse"].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        ensureLayerHover(
-          layerId,
-          (props) =>
-            `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBI) || "PODEBI Topolobampo 1"}<br/>
-         <strong>Entidad:</strong> ${fixEncoding(props.Entidad ?? props.entidad) || "Sinaloa"}<br/>
-         <strong>Publicación:</strong> ${fixEncoding(props.Publicacion) || "20 de marzo de 2020"}`,
-        );
-      }
-    });
-
-    ensureLayerHover(
-      "podebis_Tab_Oax_Tlaxc",
-      (props) =>
-        `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBI) || ""}<br/>
-     <strong>Entidad:</strong> ${fixEncoding(props.CVE_ENT) || ""}<br/>
-     <strong>Publicación:</strong> ${fixEncoding(props.estatus) || ""}`,
-    );
-
-    ["cent_podebis_Tab_Oax_Tlaxc", "cent_podebis_Tab_Oax_Tlaxc-pulse"].forEach((layerId) => {
-      if (map.getLayer(layerId)) {
-        ensureLayerHover(
-          layerId,
-          (props) =>
-            `<strong>PODEBIS:</strong> ${fixEncoding(props.PODEBIS) || ""}<br/>
-         <strong>Entidad:</strong> ${fixEncoding(props.NOM_ENT) || ""}<br/>
-         <strong>Publicación:</strong> ${fixEncoding(props.estatus) || ""}`,
-        );
-      }
-    });
-
-    const poloQRTooltip = () =>
-      `<strong>PODEBIS:</strong> ${POLO_QR_INFO.podebis}<br/>
-     <strong>Entidad:</strong> ${POLO_QR_INFO.entidad}<br/>
-     <strong>Publicación:</strong> ${POLO_QR_INFO.publicacion}`;
-
-    ensureLayerHover("poligono_polo_QR", poloQRTooltip);
-
-    ["cent_poligono_polo_QR", "cent_poligono_polo_QR-pulse"].forEach(
-      (layerId) => {
-        if (map.getLayer(layerId)) {
-          ensureLayerHover(layerId, poloQRTooltip);
-        }
-      },
-    );
-
-    // === Click en centroide → zoom al polígono correspondiente ===
-    const zoomToCentroid = (
+    // === Click en una sede → vuelo al punto + ficha fija con Street View ===
+    const abrirDetalleSede = (
       e: maplibregl.MapMouseEvent & { features?: any[] },
     ) => {
-      if (isMeasuringRef.current || isMeasuringLineRef.current) return;
+      if (midiendo()) return;
       if (!e.features?.length) return;
-      const geom = e.features[0].geometry as any;
-      const coords: [number, number] = geom.coordinates;
+
+      const feat = e.features[0];
+      const props = feat.properties ?? {};
+      const coords = ((feat.geometry as any).coordinates as number[]).slice(
+        0,
+        2,
+      ) as [number, number];
+
+      // El tooltip de hover estorbaría a la ficha fija
+      estado.hovering = false;
+      estado.lngLat = null;
+      estado.lastId = null;
+      popup.remove();
+      setSedeHover(map, sedeHoverIdRef.current, sedesDataRef.current, null);
 
       map.flyTo({
         center: coords,
-        zoom: POLO_FLY_ZOOM,
-        duration: 2600,
-        // curve < 1.42 aplana el arco: se percibe como acercamiento continuo
-        // en vez de un alejamiento previo brusco
+        zoom: SEDE_FLY_ZOOM,
+        duration: 2400,
         curve: 1.15,
         easing: easeInOutCubic,
-        // Imprescindible: sin esto MapLibre degrada el vuelo a un salto seco
-        // cuando el sistema pide reducir animaciones (caso de este equipo)
         essential: true,
       });
+
+      const contenedor = document.createElement("div");
+      contenedor.innerHTML = buildSedeCard(props);
+
+      // "Monito" de Street View: abre la vista a pie de calle de la sede
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.className = "sede-streetview";
+      boton.innerHTML = `${ICONO_PEGMAN}<span>Ver en Street View</span>`;
+      boton.addEventListener("click", () => {
+        window.open(
+          `https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${props.lat},${props.lon}`,
+          "_blank",
+          "noopener,noreferrer",
+        );
+      });
+      contenedor.querySelector(".sede-card")?.appendChild(boton);
+
+      // Reemplazar una ficha por otra no debe contar como cierre a mano
+      cierreSilenciosoRef.current = true;
+      sedeDetailRef.current.get(map)?.remove();
+      cierreSilenciosoRef.current = false;
+
+      const detalle = new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: false,
+        className: ["ml-popup-sede", clasePopupSede(props)]
+          .filter(Boolean)
+          .join(" "),
+        // El vuelo siempre termina en SEDE_FLY_ZOOM: el offset se calcula
+        // para ese zoom, así la ficha queda despegada de todo el pin
+        offset: sedePopupOffset(SEDE_FLY_ZOOM),
+        maxWidth: "300px",
+      });
+      // Cerrar la ficha a mano deshace el acercamiento: devuelve ese mapa al
+      // conjunto de sedes que tenga filtrado en ese momento.
+      detalle.on("close", () => {
+        if (cierreSilenciosoRef.current) return;
+        encuadrarSedesRef.current(map, sedesFiltradasDe(map));
+      });
+      detalle.setLngLat(coords).setDOMContent(contenedor).addTo(map);
+      sedeDetailRef.current.set(map, detalle);
     };
 
-    // Un solo listener para todas las capas: registrarlo por capa hacía que un
-    // click sobre el punto y su halo disparara dos vuelos simultáneos.
-    const prevClickHandler = centroidClickRef.current.get(map);
-    if (prevClickHandler) {
-      map.off("click", CENTROID_CLICK_LAYERS, prevClickHandler);
-    }
-    centroidClickRef.current.set(map, zoomToCentroid);
-    map.on("click", CENTROID_CLICK_LAYERS, zoomToCentroid);
+    const prevSedeClick = sedeClickRef.current.get(map);
+    if (prevSedeClick) map.off("click", SEDES_LAYERS, prevSedeClick);
+    sedeClickRef.current.set(map, abrirDetalleSede);
+    map.on("click", SEDES_LAYERS, abrirDetalleSede);
   }, []);
 
   const addRouteToMap = useCallback(
-    async (points: LngLatLike[]) => {
-      const map = mapRef.current;
+    async (
+      map: MaplibreMap | null,
+      points: LngLatLike[],
+      setDatos: React.Dispatch<React.SetStateAction<RouteData[]>>,
+      setPuntos: React.Dispatch<React.SetStateAction<LngLatLike[]>>,
+    ) => {
       if (!map) return;
       const [startPoint, endPoint] = points.map((p) => LngLat.convert(p));
       const startCoords = `${startPoint.lng},${startPoint.lat}`;
@@ -884,26 +1099,27 @@ const fixEncoding = (text: any): string => {
           duration,
         };
         drawSingleRouteOnMap(map, newRouteData);
-        setRoutesData((prev) => [...prev, newRouteData]);
+        setDatos((prev) => [...prev, newRouteData]);
       } catch (error) {
         console.error("Error al obtener la ruta:", error);
         alert("No se pudo calcular la ruta. Por favor, inténtelo de nuevo.");
       } finally {
-        clearCurrentPoints();
-        setCurrentPoints([]);
+        clearCurrentPoints(map);
+        setPuntos([]);
       }
     },
     [clearCurrentPoints, drawSingleRouteOnMap],
   );
 
   const addLineToMap = useCallback(
-    (points: LngLatLike[]) => {
-      const map = mapRef.current;
+    (
+      map: MaplibreMap | null,
+      points: LngLatLike[],
+      setDatos: React.Dispatch<React.SetStateAction<RouteData[]>>,
+      setPuntos: React.Dispatch<React.SetStateAction<LngLatLike[]>>,
+    ) => {
       if (!map) return;
       const [startPoint, endPoint] = points.map((p) => LngLat.convert(p));
-
-      console.log("[linea] startPoint:", startPoint.lat, startPoint.lng);
-      console.log("[linea] endPoint:", endPoint.lat, endPoint.lng);
 
       const toRad = (deg: number) => (deg * Math.PI) / 180;
       const R = 6371; // km
@@ -915,7 +1131,6 @@ const fixEncoding = (text: any): string => {
         Math.sin(Δφ / 2) ** 2 +
         Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) ** 2;
       const distanceKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      console.log("[linea] φ1:", φ1, "φ2:", φ2, "Δφ:", Δφ, "Δλ:", Δλ, "a:", a, "dist:", distanceKm);
       const distance = distanceKm.toFixed(2);
 
       const newLineData: RouteData = {
@@ -934,12 +1149,25 @@ const fixEncoding = (text: any): string => {
       };
 
       drawSingleLineOnMap(map, newLineData);
-      setLinesData((prev) => [...prev, newLineData]);
-      clearCurrentPoints();
-      setCurrentLinePoints([]);
+      setDatos((prev) => [...prev, newLineData]);
+      clearCurrentPoints(map);
+      setPuntos([]);
     },
     [clearCurrentPoints, drawSingleLineOnMap],
   );
+
+  // Deja visibles sólo las sedes que pasan los filtros del panel de ese mapa
+  const applySedesFilter = (map: maplibregl.Map) => {
+    const uids =
+      map === splitMapRef.current
+        ? sedesFilterSplitRef.current
+        : sedesFilterRef.current;
+    const filtro: any =
+      uids === null ? null : ["in", ["get", "uid"], ["literal", uids]];
+    SEDES_LAYERS.forEach((id) => {
+      if (map.getLayer(id)) map.setFilter(id, filtro);
+    });
+  };
 
   const addVectorLayers = (map: maplibregl.Map) => {
     const zonas = ["zona1", "zona2"];
@@ -958,10 +1186,10 @@ const fixEncoding = (text: any): string => {
           source: `ofrep_${zona}`,
           "source-layer": `or_${zona}_tile`,
           paint: {
-            "circle-radius": 4.5,
+            "circle-radius": radioPorZoom(4.5, 6, 8.5, 11),
             "circle-color": "#a57f2c",
             "circle-stroke-color": "#ffffff",
-            "circle-stroke-width": 1.5,
+            "circle-stroke-width": radioPorZoom(1.5, 1.6, 1.9, 2.2),
           },
         });
       }
@@ -1042,10 +1270,10 @@ const fixEncoding = (text: any): string => {
         source: "LocalidadesSedeINPI",
         "source-layer": "inpi_tile",
         paint: {
-          "circle-radius": 3,
+          "circle-radius": radioPorZoom(3, 4.5, 7, 9),
           "circle-color": puebloExpression,
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 0.5,
+          "circle-stroke-width": radioPorZoom(0.5, 0.8, 1.2, 1.6),
         },
       });
     }
@@ -1063,341 +1291,42 @@ const fixEncoding = (text: any): string => {
         source: "PresidenciasMunicipales",
         "source-layer": "PresidenciasMunicipales_tile",
         paint: {
-          "circle-radius": 2.5,
+          "circle-radius": radioPorZoom(2.5, 4, 6, 8),
           "circle-color": "#000000",
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 0.7,
+          "circle-stroke-width": radioPorZoom(0.7, 1, 1.4, 1.8),
         },
       });
     }
 
-    // === Polígono de polos (≥ 11) ===
-    if (!map.getSource("polosBienestar")) {
-      map.addSource("polosBienestar", {
-        type: "vector",
-        url: "pmtiles://data/polos7.pmtiles",
-      });
-    }
-    if (!map.getLayer("polosBienestar")) {
-      map.addLayer({
-        id: "polosBienestar",
-        type: "fill",
-        source: "polosBienestar",
-        "source-layer": "polos7_tile",
-        minzoom: 11,
-        filter: FILTRO_POLOS_EXCLUIDOS,
-        paint: {
-          "fill-color": "rgba(155, 34, 71, 0.7)",
-          "fill-outline-color": "#ffffff",
-          "fill-opacity": POLIGONO_FADE_IN,
-        },
-      });
-    }
-
-    // === CENTROIDES DE POLOS (< 11) — ¡fuera del if de polos! ===
-    if (!map.getSource("polosBienestar_centroides")) {
-      map.addSource("polosBienestar_centroides", {
-        type: "vector",
-        url: "pmtiles://data/centroides_polos7.pmtiles",
-      });
-    }
-    // Pulso
-    if (!map.getLayer("polosCentroides-pulse")) {
-      map.addLayer({
-        id: "polosCentroides-pulse",
-        type: "circle",
-        source: "polosBienestar_centroides",
-        "source-layer": "centroides_polos7_tile", // cambia si tu layer interno difiere
-        maxzoom: 11, // oculto desde 11
-        filter: FILTRO_POLOS_EXCLUIDOS,
-        paint: {
-          "circle-radius": 10,
-          "circle-color": "#9b2247",
-          "circle-opacity": 0.0,
-        },
-      });
-    }
-    // Punto base
-    if (!map.getLayer("polosCentroides")) {
-      map.addLayer({
-        id: "polosCentroides",
-        type: "circle",
-        source: "polosBienestar_centroides",
-        "source-layer": "centroides_polos7_tile", // cambia si tu layer interno difiere
-        maxzoom: 11, // oculto desde 11
-        filter: FILTRO_POLOS_EXCLUIDOS,
-        paint: {
-          "circle-radius": 4,
-          "circle-color": "#9b2247",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1,
-          "circle-opacity": CENTROIDE_FADE_OUT,
-          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
-        },
-      });
-    }
-
-    // === Polígono San José Chiapa, Pue. (≥ 11) ===
-    if (!map.getSource("SJC_Pue")) {
-      map.addSource("SJC_Pue", {
-        type: "vector",
-        url: "pmtiles://data/poligonos_SJC_Pue.pmtiles",
-      });
-    }
-    if (!map.getLayer("SJC_Pue")) {
-      map.addLayer({
-        id: "SJC_Pue",
-        type: "fill",
-        source: "SJC_Pue",
-        "source-layer": "poligonos",
-        minzoom: 11,
-        paint: {
-          "fill-color": "rgba(155, 34, 71, 0.7)",
-          "fill-outline-color": "#ffffff",
-          "fill-opacity": POLIGONO_FADE_IN,
-        },
-      });
-    }
-
-    // === CENTROIDES SJC (< 11) ===
-    if (!map.getSource("SJC_centroides")) {
-      map.addSource("SJC_centroides", {
-        type: "vector",
-        url: "pmtiles://data/centroides_SJC.pmtiles",
-      });
-    }
-    // Pulso
-    if (!map.getLayer("SJC_centroides-pulse")) {
-      map.addLayer({
-        id: "SJC_centroides-pulse",
-        type: "circle",
-        source: "SJC_centroides",
-        "source-layer": "poligonos",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 10,
-          "circle-color": "#9b2247",
-          "circle-opacity": 0.0,
-        },
-      });
-    }
-    // Punto base
-    if (!map.getLayer("SJC_centroides")) {
-      map.addLayer({
-        id: "SJC_centroides",
-        type: "circle",
-        source: "SJC_centroides",
-        "source-layer": "poligonos",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 4,
-          "circle-color": "#9b2247",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1,
-          "circle-opacity": CENTROIDE_FADE_OUT,
-          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
-        },
-      });
-    }
-
-        // === Polígono Topolobampo, Sin ===
-    if (!map.getSource("polos_topo")) {
-      map.addSource("polos_topo", {
-        type: "vector",
-        url: "pmtiles://data/polos_topo.pmtiles",
-      });
-    }
-    if (!map.getLayer("polos_topo")) {
-      map.addLayer({
-        id: "polos_topo",
-        type: "fill",
-        source: "polos_topo",
-        "source-layer": "polos_topo_tile",
-        minzoom: 11,
-        paint: {
-          "fill-color": "rgba(155, 34, 71, 0.7)",
-          "fill-outline-color": "#ffffff",
-          "fill-opacity": POLIGONO_FADE_IN,
-        },
-      });
-    }
-
-    // === Centroides Topolobampo  ===
-    if (!map.getSource("cent_polos_topo")) {
-      map.addSource("cent_polos_topo", {
-        type: "vector",
-        url: "pmtiles://data/cent_polos_topo.pmtiles",
-      });
-    }
-    // Pulso
-    if (!map.getLayer("cent_polos_topo-pulse")) {
-      map.addLayer({
-        id: "cent_polos_topo-pulse",
-        type: "circle",
-        source: "cent_polos_topo",
-        "source-layer": "cent_polos_topo_tile",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 10,
-          "circle-color": "#9b2247",
-          "circle-opacity": 0.0,
-        },
-      });
-    }
-    // Punto base
-    if (!map.getLayer("cent_polos_topo")) {
-      map.addLayer({
-        id: "cent_polos_topo",
-        type: "circle",
-        source: "cent_polos_topo",
-        "source-layer": "cent_polos_topo_tile",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 4,
-          "circle-color": "#9b2247",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1,
-          "circle-opacity": CENTROIDE_FADE_OUT,
-          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
-        },
-      });
-    }
-
-    // === Polígono PODEBIS Tab/Oax/Tlaxc (≥ 11) ===
-    if (!map.getSource("podebis_Tab_Oax_Tlaxc")) {
-      map.addSource("podebis_Tab_Oax_Tlaxc", {
-        type: "vector",
-        url: "pmtiles://data/podebis_Tab_Oax_Tlaxc.pmtiles",
-      });
-    }
-    if (!map.getLayer("podebis_Tab_Oax_Tlaxc")) {
-      map.addLayer({
-        id: "podebis_Tab_Oax_Tlaxc",
-        type: "fill",
-        source: "podebis_Tab_Oax_Tlaxc",
-        "source-layer": "podebis_Tab_Oax_Tlaxc_tile",
-        minzoom: 11,
-        paint: {
-          "fill-color": "rgba(155, 34, 71, 0.7)",
-          "fill-outline-color": "#ffffff",
-          "fill-opacity": POLIGONO_FADE_IN,
-        },
-      });
-    }
-
-    // === Centroides PODEBIS Tab/Oax/Tlaxc (< 11) ===
-    if (!map.getSource("cent_podebis_Tab_Oax_Tlaxc")) {
-      map.addSource("cent_podebis_Tab_Oax_Tlaxc", {
-        type: "vector",
-        url: "pmtiles://data/cent_podebis_Tab_Oax_Tlaxc.pmtiles",
-      });
-    }
-    // Pulso
-    if (!map.getLayer("cent_podebis_Tab_Oax_Tlaxc-pulse")) {
-      map.addLayer({
-        id: "cent_podebis_Tab_Oax_Tlaxc-pulse",
-        type: "circle",
-        source: "cent_podebis_Tab_Oax_Tlaxc",
-        "source-layer": "cent_podebis_Tab_Oax_Tlaxc_tile",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 10,
-          "circle-color": "#9b2247",
-          "circle-opacity": 0.0,
-        },
-      });
-    }
-    // Punto base
-    if (!map.getLayer("cent_podebis_Tab_Oax_Tlaxc")) {
-      map.addLayer({
-        id: "cent_podebis_Tab_Oax_Tlaxc",
-        type: "circle",
-        source: "cent_podebis_Tab_Oax_Tlaxc",
-        "source-layer": "cent_podebis_Tab_Oax_Tlaxc_tile",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 4,
-          "circle-color": "#9b2247",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1,
-          "circle-opacity": CENTROIDE_FADE_OUT,
-          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
-        },
-      });
-    }
-
-    // === Polígono Polo Quintana Roo (≥ 11) ===
-    if (!map.getSource("poligono_polo_QR")) {
-      map.addSource("poligono_polo_QR", {
-        type: "vector",
-        url: "pmtiles://data/poligono_polo_QR.pmtiles",
-      });
-    }
-    if (!map.getLayer("poligono_polo_QR")) {
-      map.addLayer({
-        id: "poligono_polo_QR",
-        type: "fill",
-        source: "poligono_polo_QR",
-        "source-layer": "poligono_polo_QR_tile",
-        minzoom: 11,
-        paint: {
-          "fill-color": "rgba(155, 34, 71, 0.7)",
-          "fill-outline-color": "#ffffff",
-          "fill-opacity": POLIGONO_FADE_IN,
-        },
-      });
-    }
-
-    // === Centroide Polo Quintana Roo (< 11) ===
-    // El pmtiles sólo trae el polígono; el centroide se deriva de su extensión.
-    if (!map.getSource("cent_poligono_polo_QR")) {
-      map.addSource("cent_poligono_polo_QR", {
+    // === Sedes de Asambleas y Mesas de Trabajo (LGPI) ===
+    if (!map.getSource(SEDES_SOURCE)) {
+      const sedesData = sedesFeatureCollection();
+      sedesDataRef.current.set(map, sedesData);
+      map.addSource(SEDES_SOURCE, {
         type: "geojson",
-        data: {
-          type: "Feature",
-          geometry: {
-            type: "Point",
-            coordinates: POLO_QR_CENTROID,
-          },
-          properties: {
-            PODEBI: POLO_QR_INFO.podebis,
-            Entidad: POLO_QR_INFO.entidad,
-            Publicacion: POLO_QR_INFO.publicacion,
-          },
-        } as Feature<Point>,
+        data: sedesData,
       });
     }
-    // Pulso
-    if (!map.getLayer("cent_poligono_polo_QR-pulse")) {
+    ensureSedeIconLoader(map, sedeIconLoaderRef.current);
+    // Pin: icono rasterizado (gota con degradado, brillo y glifo) por tipo
+    if (!map.getLayer("sedes_lgpi")) {
       map.addLayer({
-        id: "cent_poligono_polo_QR-pulse",
-        type: "circle",
-        source: "cent_poligono_polo_QR",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 10,
-          "circle-color": "#9b2247",
-          "circle-opacity": 0.0,
+        id: "sedes_lgpi",
+        type: "symbol",
+        source: SEDES_SOURCE,
+        layout: {
+          "icon-image": SEDE_ICON_MATCH,
+          // El factor de hover (feature-state) resalta el pin bajo el cursor
+          "icon-size": SEDE_ICON_SIZE_EXPR,
+          "icon-anchor": "bottom",
+          "icon-allow-overlap": true,
+          "icon-ignore-placement": true,
         },
       });
     }
-    // Punto base
-    if (!map.getLayer("cent_poligono_polo_QR")) {
-      map.addLayer({
-        id: "cent_poligono_polo_QR",
-        type: "circle",
-        source: "cent_poligono_polo_QR",
-        maxzoom: 11,
-        paint: {
-          "circle-radius": 4,
-          "circle-color": "#9b2247",
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1,
-          "circle-opacity": CENTROIDE_FADE_OUT,
-          "circle-stroke-opacity": CENTROIDE_FADE_OUT,
-        },
-      });
-    }
+    // Al recrearse el estilo (satelital / 3D) las capas nacen sin filtro
+    applySedesFilter(map);
   };
 
   const updateLayerVisibility = useCallback(
@@ -1409,12 +1338,18 @@ const fixEncoding = (text: any): string => {
             map.setLayoutProperty(id, "visibility", vis);
           }
         } catch {}
-        if (id === "polosBienestar") {
-          PODEBIS_LAYERS.forEach((cid) => {
-            if (map.getLayer(cid)) {
-              map.setLayoutProperty(cid, "visibility", vis);
+        // El toggle de sedes gobierna el punto y su halo pulsante
+        if (id === SEDES_TOGGLE_ID) {
+          SEDES_LAYERS.forEach((sid) => {
+            if (map.getLayer(sid)) {
+              map.setLayoutProperty(sid, "visibility", vis);
             }
           });
+          if (!visible) {
+            cierreSilenciosoRef.current = true;
+            sedeDetailRef.current.get(map)?.remove();
+            cierreSilenciosoRef.current = false;
+          }
         }
       });
     },
@@ -1566,8 +1501,6 @@ const fixEncoding = (text: any): string => {
               pulseOpacity * 0.4,
             );
           }
-          // 👉 Añadido: animar también el pulso de centroides
-          applyCentroidPulse(map, pulseRadius, pulseOpacity);
           blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
         };
         animateComindPulse(0);
@@ -1651,11 +1584,6 @@ const fixEncoding = (text: any): string => {
       styleUrl = base3DStyleUrl;
     }
 
-    const mexicoBounds: [LngLatLike, LngLatLike] = [
-      [-102, 14],
-      [-84, 33.5],
-    ];
-
     const splitMap = new maplibregl.Map({
       container: splitContainerRef.current,
       style: styleUrl,
@@ -1664,7 +1592,8 @@ const fixEncoding = (text: any): string => {
       pitch: currentPitch,
       bearing: currentBearing,
       attributionControl: false,
-      maxBounds: mexicoBounds,
+      // Mismo límite de desplazamiento que el mapa principal
+      maxBounds: MEXICO_BOUNDS,
       maxPitch: 85,
     });
     splitMapRef.current = splitMap;
@@ -1687,7 +1616,6 @@ const fixEncoding = (text: any): string => {
 
       // Aplicar la misma visibilidad de capas que el mapa principal
       const allToggleableLayers = [
-        "polosBienestar",
         "ofrep_zona1",
         "ofrep_zona2",
         "regiones_zona1",
@@ -1702,10 +1630,12 @@ const fixEncoding = (text: any): string => {
         }
       });
 
-      // Hacer visibles los polos por defecto
-      PODEBIS_LAYERS.forEach((layerId) => {
+      // Las sedes heredan el estado del mapa principal
+      const sedesVis =
+        layersVisibility[SEDES_TOGGLE_ID] === false ? "none" : "visible";
+      SEDES_LAYERS.forEach((layerId) => {
         if (splitMap.getLayer(layerId)) {
-          splitMap.setLayoutProperty(layerId, "visibility", "visible");
+          splitMap.setLayoutProperty(layerId, "visibility", sedesVis);
         }
       });
 
@@ -1750,7 +1680,6 @@ const fixEncoding = (text: any): string => {
             pulseOpacity * 0.4,
           );
         }
-        applyCentroidPulse(splitMap, pulseRadius, pulseOpacity);
 
         splitBlinkAnimationId.current =
           requestAnimationFrame(animateSplitPulse);
@@ -1781,6 +1710,11 @@ const fixEncoding = (text: any): string => {
         splitMap.on("zoom", syncSplitMinimap);
         syncSplitMinimap();
       }
+
+      // Reproyecta las etiquetas de distancia mientras el mapa se mueve
+      const refrescarEtiquetas = () => setMapView((v) => v + 1);
+      splitMap.on("move", refrescarEtiquetas);
+      splitMap.on("zoom", refrescarEtiquetas);
 
       attachAllTooltipEvents(splitMap);
 
@@ -1856,6 +1790,17 @@ const fixEncoding = (text: any): string => {
       splitMapRef.current.remove();
       splitMapRef.current = null;
     }
+    // Al reabrir, el mapa dividido vuelve a heredar la vista del principal en
+    // lugar de encuadrar sus filtros de inmediato.
+    primerEncuadreSplitRef.current = true;
+
+    // Las mediciones vivían en las capas de ese mapa: se van con él
+    setSplitRoutesData([]);
+    setSplitLinesData([]);
+    setSplitCurrentPoints([]);
+    setSplitCurrentLinePoints([]);
+    setSplitIsMeasuring(false);
+    setSplitIsMeasuringLine(false);
   }, []);
 
   const toggleSplitView = useCallback(() => {
@@ -1977,8 +1922,6 @@ const fixEncoding = (text: any): string => {
             pulseOpacity * 0.4,
           );
         }
-        // 👉 Añadido también aquí para estilos satelitales:
-        applyCentroidPulse(map, pulseRadius, pulseOpacity);
 
         blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
       };
@@ -2078,37 +2021,9 @@ const fixEncoding = (text: any): string => {
       Object.entries(splitLayersVisibility).forEach(([id, visible]) => {
         const vis = visible ? "visible" : "none";
         if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
-        if (id === "polosBienestar") {
-          [
-            "polosCentroides", "polosCentroides-pulse",
-            "SJC_Pue", "SJC_centroides", "SJC_centroides-pulse",
-          ].forEach((cid) => {
-            if (map.getLayer(cid))
-              map.setLayoutProperty(cid, "visibility", vis);
-          });
-        }
-      });
-
-      // Hacer visibles los polos por defecto
-      PODEBIS_LAYERS.forEach((layerId) => {
-        if (map.getLayer(layerId)) {
-          map.setLayoutProperty(layerId, "visibility", "visible");
-        }
       });
 
       attachAllTooltipEvents(map);
-
-      if (splitBlinkAnimationId.current)
-        cancelAnimationFrame(splitBlinkAnimationId.current);
-      const animateSplitPulse = (timestamp: number) => {
-        const pulseRadius = 15 * (Math.abs(Math.sin(timestamp / 500)) + 0.5);
-        const pulseOpacity = 1 - pulseRadius / 25;
-        applyCentroidPulse(map, pulseRadius, pulseOpacity);
-
-        splitBlinkAnimationId.current =
-          requestAnimationFrame(animateSplitPulse);
-      };
-      animateSplitPulse(0);
 
       map.jumpTo({
         center: currentCenter,
@@ -2192,25 +2107,7 @@ const fixEncoding = (text: any): string => {
           if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", vis);
         });
 
-        PODEBIS_LAYERS.forEach((layerId) => {
-          if (map.getLayer(layerId)) {
-            map.setLayoutProperty(layerId, "visibility", "visible");
-          }
-        });
-
         attachAllTooltipEvents(map);
-
-        if (splitBlinkAnimationId.current)
-          cancelAnimationFrame(splitBlinkAnimationId.current);
-        const animateSplitPulse = (timestamp: number) => {
-          const pulseRadius = 15 * (Math.abs(Math.sin(timestamp / 500)) + 0.5);
-          const pulseOpacity = 1 - pulseRadius / 25;
-          applyCentroidPulse(map, pulseRadius, pulseOpacity);
-
-          splitBlinkAnimationId.current =
-            requestAnimationFrame(animateSplitPulse);
-        };
-        animateSplitPulse(0);
 
         map.jumpTo({
           center: currentCenter,
@@ -2231,13 +2128,22 @@ const fixEncoding = (text: any): string => {
   };
 
   const toggleSplitMeasurement = () => {
-    setSplitIsMeasuring((prev) => !prev);
+    const estaba = splitIsMeasuring;
+    setSplitIsMeasuring(!estaba);
     setSplitIsMeasuringLine(false);
+    // Apagar la herramienta limpia lo trazado, igual que en el principal
+    if (estaba) clearAllRoutesSplit();
+    setSplitCurrentPoints([]);
+    setSplitCurrentLinePoints([]);
   };
 
   const toggleSplitLineMeasurement = () => {
-    setSplitIsMeasuringLine((prev) => !prev);
+    const estaba = splitIsMeasuringLine;
+    setSplitIsMeasuringLine(!estaba);
     setSplitIsMeasuring(false);
+    if (estaba) clearAllRoutesSplit();
+    setSplitCurrentPoints([]);
+    setSplitCurrentLinePoints([]);
   };
 
   // Handler para cambiar visibilidad de capas en el mapa secundario
@@ -2249,22 +2155,32 @@ const fixEncoding = (text: any): string => {
   }, []);
 
   // Configuración de secciones para el InfoBox del mapa secundario
+  // Mismas secciones que el panel del mapa principal, con estado propio
   const splitInfoBoxSections: InfoBoxSection[] = [
     {
-      title: "Polos",
+      title: "Sedes LGPI",
       items: [
         {
-          id: "polosBienestar",
-          label: "Polos de Desarrollo para el BIENESTAR",
-          color: "#9b2247",
+          // Capa base del visor: sin interruptor, siempre visible
+          id: SEDES_TOGGLE_ID,
+          label: "Asambleas regionales",
+          color: SEDE_COLORS[TIPO_ASAMBLEA],
           shape: "circle",
-          switch: false,
-          checked: splitLayersVisibility["polosBienestar"] ?? true,
+          checked: true,
+        },
+        {
+          // Sólo leyenda: comparte la capa con la fila anterior
+          id: "sedesLGPI-mesa",
+          label: "Mesas de trabajo",
+          color: SEDE_COLORS[TIPO_MESA],
+          shape: "circle",
+          checked: true,
         },
       ],
     },
     {
-      title: "Comunidades Indígenas",
+      // El salto de línea lo respeta .legend-title con white-space: pre-line
+      title: "Comunidades Indígenas y\nAfromexicanas",
       items: [
         {
           id: "LocalidadesSedeINPI",
@@ -2281,7 +2197,7 @@ const fixEncoding = (text: any): string => {
       items: [
         {
           id: "ofrep_zona1",
-          label: "Oficinas INPI",
+          label: "Oficinas de Representación INPI",
           color: "#a57f2c",
           shape: "circle",
           switch: true,
@@ -2302,7 +2218,7 @@ const fixEncoding = (text: any): string => {
       items: [
         {
           id: "ofrep_zona2",
-          label: "Oficinas INPI",
+          label: "Oficinas de Representación INPI",
           color: "#a57f2c",
           shape: "circle",
           switch: true,
@@ -2319,7 +2235,7 @@ const fixEncoding = (text: any): string => {
       ],
     },
     {
-      title: "Presidencias",
+      title: "Presidencias Municipales",
       items: [
         {
           id: "PresidenciasMunicipales",
@@ -2344,11 +2260,10 @@ const fixEncoding = (text: any): string => {
         if (map.getLayer(id)) {
           map.setLayoutProperty(id, "visibility", vis);
         }
-        // También actualizar centroides y demás polígonos si es polosBienestar
-        if (id === "polosBienestar") {
-          PODEBIS_LAYERS.forEach((cid) => {
-            if (map.getLayer(cid)) {
-              map.setLayoutProperty(cid, "visibility", vis);
+        if (id === SEDES_TOGGLE_ID) {
+          SEDES_LAYERS.forEach((sid) => {
+            if (map.getLayer(sid)) {
+              map.setLayoutProperty(sid, "visibility", vis);
             }
           });
         }
@@ -2365,17 +2280,19 @@ const fixEncoding = (text: any): string => {
 
     const protocol = new Protocol();
     maplibregl.addProtocol("pmtiles", protocol.tile);
-    const mexicoBounds: [LngLatLike, LngLatLike] = MEXICO_BOUNDS;
 
     const map = new maplibregl.Map({
       container,
       style: baseStyleUrl,
-      center: [-101.14765, 23.33676],
-      zoom: 4,
+      // El encuadre manda sobre center/zoom: así la república llena el visor
+      // en cualquier resolución, en lugar de quedar chica con un zoom fijo.
+      bounds: MEXICO_VIEW,
+      fitBoundsOptions: { padding: MEXICO_VIEW_PADDING },
       pitch: 0,
       bearing: 0,
       attributionControl: false,
-      maxBounds: mexicoBounds,
+      // Mismo límite de desplazamiento que la vista dividida
+      maxBounds: MEXICO_BOUNDS,
       maxPitch: 85,
     });
     mapRef.current = map;
@@ -2394,7 +2311,6 @@ const fixEncoding = (text: any): string => {
       addVectorLayers(map);
 
       const allToggleableLayers = [
-        "polosBienestar",
         "ofrep_zona1",
         "ofrep_zona2",
         "regiones_zona1",
@@ -2405,12 +2321,6 @@ const fixEncoding = (text: any): string => {
       allToggleableLayers.forEach((layerId) => {
         if (map.getLayer(layerId)) {
           map.setLayoutProperty(layerId, "visibility", "none");
-        }
-      });
-
-      PODEBIS_LAYERS.forEach((layerId) => {
-        if (map.getLayer(layerId)) {
-          map.setLayoutProperty(layerId, "visibility", "visible");
         }
       });
 
@@ -2445,7 +2355,6 @@ const fixEncoding = (text: any): string => {
       };
       animatePulse(0);
 
-      // 👇 AÑADIDO: animación incluye también polosCentroides-pulse desde el load
       const animateComindPulse = (timestamp: number) => {
         const pulseProgress = (Math.sin(timestamp / 1200) + 1) / 2;
         const baseRadius = 8;
@@ -2482,7 +2391,6 @@ const fixEncoding = (text: any): string => {
             pulseOpacity * 0.4,
           );
         }
-        applyCentroidPulse(map, pulseRadius, pulseOpacity);
 
         blinkAnimationId.current = requestAnimationFrame(animateComindPulse);
       };
@@ -2519,6 +2427,8 @@ const fixEncoding = (text: any): string => {
     });
 
     return () => {
+      // Al desmontar, el cierre de la ficha no debe intentar mover el mapa
+      cierreSilenciosoRef.current = true;
       if (animationFrameId.current)
         cancelAnimationFrame(animationFrameId.current);
       if (blinkAnimationId.current)
@@ -2553,22 +2463,166 @@ const fixEncoding = (text: any): string => {
     }
   }, [layersVisibility, updateLayerVisibility]);
 
+  // === Sedes LGPI: zoom automático al conjunto filtrado ===
+  // Recibe el mapa: el principal y el dividido encuadran sus propios filtros.
+  const encuadrarSedesEn = useCallback(
+    (map: MaplibreMap | null, sedes: SedeLGPI[]) => {
+      if (!map || !sedes.length) return;
+
+      if (sedes.length === 1) {
+        map.flyTo({
+          center: [sedes[0].lon, sedes[0].lat],
+          zoom: 12,
+          duration: 2200,
+          curve: 1.15,
+          easing: easeInOutCubic,
+          essential: true,
+        });
+        return;
+      }
+
+      // Deja aire para el panel de capas (izquierda) y el de filtros (derecha)
+      const ancho = map.getContainer().clientWidth || 1000;
+      const bounds = new maplibregl.LngLatBounds();
+      sedes.forEach((s) => bounds.extend([s.lon, s.lat] as [number, number]));
+
+      map.fitBounds(bounds, {
+        padding: {
+          top: 90,
+          bottom: 90,
+          left: Math.min(340, ancho * 0.28),
+          right: Math.min(310, ancho * 0.28),
+        },
+        maxZoom: 13,
+        duration: 1600,
+        easing: easeInOutCubic,
+        essential: true,
+      });
+    },
+    [],
+  );
+
+  encuadrarSedesRef.current = encuadrarSedesEn;
+
+  const handleSedesFiltradas = useCallback((sedes: SedeLGPI[]) => {
+    setSedesFiltradas(sedes);
+  }, []);
+
+  const verTodasLasSedes = useCallback(() => {
+    encuadrarSedesEn(mapRef.current, SEDES_LGPI);
+  }, [encuadrarSedesEn]);
+
+  const handleSedesFiltradasSplit = useCallback((sedes: SedeLGPI[]) => {
+    setSedesFiltradasSplit(sedes);
+  }, []);
+
+  const verTodasLasSedesSplit = useCallback(() => {
+    encuadrarSedesEn(splitMapRef.current, SEDES_LGPI);
+  }, [encuadrarSedesEn]);
+
   useEffect(() => {
-    if (currentPoints.length === 2) addRouteToMap(currentPoints);
+    // Sin filtros activos se limpia la expresión, en vez de listar las 89
+    sedesFilterRef.current =
+      sedesFiltradas.length === SEDES_LGPI.length
+        ? null
+        : sedesFiltradas.map((s) => SEDES_LGPI.indexOf(s));
+
+    sedesFiltradasRef.current = sedesFiltradas;
+
+    const map = mapRef.current;
+    if (map) applySedesFilter(map);
+    // Cambiar de filtro ya reencuadra por su cuenta: este cierre no debe hacerlo
+    cierreSilenciosoRef.current = true;
+    if (map) sedeDetailRef.current.get(map)?.remove();
+    cierreSilenciosoRef.current = false;
+
+    // El primer render ya arranca con la vista de la república
+    if (primerEncuadreRef.current) {
+      primerEncuadreRef.current = false;
+      return;
+    }
+    encuadrarSedesEn(map, sedesFiltradas);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sedesFiltradas, encuadrarSedesEn]);
+
+  // Lo mismo para el mapa dividido, con sus propios filtros
+  useEffect(() => {
+    sedesFilterSplitRef.current =
+      sedesFiltradasSplit.length === SEDES_LGPI.length
+        ? null
+        : sedesFiltradasSplit.map((s) => SEDES_LGPI.indexOf(s));
+
+    sedesFiltradasSplitRef.current = sedesFiltradasSplit;
+
+    const map = splitMapRef.current;
+    if (!map) return;
+
+    applySedesFilter(map);
+    cierreSilenciosoRef.current = true;
+    sedeDetailRef.current.get(map)?.remove();
+    cierreSilenciosoRef.current = false;
+
+    // Al abrirse, el mapa dividido ya nace encuadrado como el principal
+    if (primerEncuadreSplitRef.current) {
+      primerEncuadreSplitRef.current = false;
+      return;
+    }
+    encuadrarSedesEn(map, sedesFiltradasSplit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sedesFiltradasSplit, encuadrarSedesEn, isSplitView]);
+
+  // Sobre la imagen satelital el fondo es oscuro y variado: los paneles de
+  // vidrio pierden legibilidad, así que se avisa por el body para que suban su
+  // opacidad. Basta con que uno de los dos mapas esté en satelital.
+  useEffect(() => {
+    const satelital = isSatellite || splitIsSatellite;
+    document.body.classList.toggle("mapa-satelital", satelital);
+    return () => document.body.classList.remove("mapa-satelital");
+  }, [isSatellite, splitIsSatellite]);
+
+  // Al completar el par de puntos se traza: cada mapa con su propio estado
+  useEffect(() => {
+    if (currentPoints.length === 2)
+      addRouteToMap(mapRef.current, currentPoints, setRoutesData, setCurrentPoints);
   }, [currentPoints, addRouteToMap]);
 
   useEffect(() => {
-    if (currentLinePoints.length === 2) addLineToMap(currentLinePoints);
+    if (currentLinePoints.length === 2)
+      addLineToMap(
+        mapRef.current,
+        currentLinePoints,
+        setLinesData,
+        setCurrentLinePoints,
+      );
   }, [currentLinePoints, addLineToMap]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
+    if (splitCurrentPoints.length === 2)
+      addRouteToMap(
+        splitMapRef.current,
+        splitCurrentPoints,
+        setSplitRoutesData,
+        setSplitCurrentPoints,
+      );
+  }, [splitCurrentPoints, addRouteToMap]);
 
-    const addOrUpdateAnimatedPoint = (
+  useEffect(() => {
+    if (splitCurrentLinePoints.length === 2)
+      addLineToMap(
+        splitMapRef.current,
+        splitCurrentLinePoints,
+        setSplitLinesData,
+        setSplitCurrentLinePoints,
+      );
+  }, [splitCurrentLinePoints, addLineToMap]);
+
+  // Punto provisional que marca cada clic mientras se mide
+  const marcarPuntoProvisional = useCallback(
+    (
+      map: MaplibreMap,
       id: "start" | "end",
       lngLat: LngLat,
-      isLine: boolean = false,
+      isLine: boolean,
     ) => {
       const prefix = isLine ? "line-" : "";
       const sourceId = `${id}-point-${prefix}current`;
@@ -2581,67 +2635,124 @@ const fixEncoding = (text: any): string => {
 
       if (map.getSource(sourceId)) {
         (map.getSource(sourceId) as GeoJSONSource).setData(pointFeature);
-      } else {
-        map.addSource(sourceId, { type: "geojson", data: pointFeature });
-        map.addLayer({
-          id: `${sourceId}-pulse`,
-          type: "circle",
-          source: sourceId,
-          paint: {
-            "circle-radius": 10,
-            "circle-color": color,
-            "circle-opacity": 0.8,
-          },
-        });
-        map.addLayer({
-          id: sourceId,
-          type: "circle",
-          source: sourceId,
-          paint: {
-            "circle-radius": 6,
-            "circle-color": color,
-            "circle-stroke-width": 2,
-            "circle-stroke-color": "#ffffff",
-          },
-        });
+        return;
       }
-    };
+      map.addSource(sourceId, { type: "geojson", data: pointFeature });
+      map.addLayer({
+        id: `${sourceId}-pulse`,
+        type: "circle",
+        source: sourceId,
+        paint: {
+          "circle-radius": 10,
+          "circle-color": color,
+          "circle-opacity": 0.8,
+        },
+      });
+      map.addLayer({
+        id: sourceId,
+        type: "circle",
+        source: sourceId,
+        paint: {
+          "circle-radius": 6,
+          "circle-color": color,
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+    },
+    [],
+  );
 
-    const handleMapClick = (e: maplibregl.MapMouseEvent) => {
-      if (isMeasuring) {
-        if (currentPoints.length >= 2) return;
-        const newPoint = e.lngLat;
-        const pointId = currentPoints.length === 0 ? "start" : "end";
-        addOrUpdateAnimatedPoint(pointId, newPoint, false);
-        setCurrentPoints((prev) => [...prev, newPoint]);
-      } else if (isMeasuringLine) {
-        if (currentLinePoints.length >= 2) return;
-        const newPoint = e.lngLat;
-        const pointId = currentLinePoints.length === 0 ? "start" : "end";
-        addOrUpdateAnimatedPoint(pointId, newPoint, true);
-        setCurrentLinePoints((prev) => [...prev, newPoint]);
+  // Registra el clic que va acumulando los puntos. Devuelve la limpieza, para
+  // que ambos mapas puedan usarla desde su propio useEffect.
+  const registrarMedicion = useCallback(
+    (
+      map: MaplibreMap | null,
+      midiendoRuta: boolean,
+      midiendoLinea: boolean,
+      puntosRuta: LngLatLike[],
+      puntosLinea: LngLatLike[],
+      setPuntosRuta: React.Dispatch<React.SetStateAction<LngLatLike[]>>,
+      setPuntosLinea: React.Dispatch<React.SetStateAction<LngLatLike[]>>,
+    ) => {
+      if (!map) return;
+
+      const alHacerClic = (e: maplibregl.MapMouseEvent) => {
+        if (midiendoRuta) {
+          if (puntosRuta.length >= 2) return;
+          marcarPuntoProvisional(
+            map,
+            puntosRuta.length === 0 ? "start" : "end",
+            e.lngLat,
+            false,
+          );
+          setPuntosRuta((prev) => [...prev, e.lngLat]);
+        } else if (midiendoLinea) {
+          if (puntosLinea.length >= 2) return;
+          marcarPuntoProvisional(
+            map,
+            puntosLinea.length === 0 ? "start" : "end",
+            e.lngLat,
+            true,
+          );
+          setPuntosLinea((prev) => [...prev, e.lngLat]);
+        }
+      };
+
+      if (midiendoRuta || midiendoLinea) {
+        map.getCanvas().style.cursor = "crosshair";
+        map.on("click", alHacerClic);
       }
-    };
 
-    if (isMeasuring || isMeasuringLine) {
-      map.getCanvas().style.cursor = "crosshair";
-      map.on("click", handleMapClick);
-    }
+      return () => {
+        if (map.getCanvas()) map.getCanvas().style.cursor = "";
+        map.off("click", alHacerClic);
+      };
+    },
+    [marcarPuntoProvisional],
+  );
 
-    return () => {
-      if (map.getCanvas()) {
-        map.getCanvas().style.cursor = "";
-      }
-      map.off("click", handleMapClick);
-    };
-  }, [
-    isMeasuring,
-    isMeasuringLine,
-    currentPoints,
-    currentLinePoints,
-    addRouteToMap,
-    addLineToMap,
-  ]);
+  useEffect(
+    () =>
+      registrarMedicion(
+        mapRef.current,
+        isMeasuring,
+        isMeasuringLine,
+        currentPoints,
+        currentLinePoints,
+        setCurrentPoints,
+        setCurrentLinePoints,
+      ),
+    [
+      isMeasuring,
+      isMeasuringLine,
+      currentPoints,
+      currentLinePoints,
+      registrarMedicion,
+    ],
+  );
+
+  useEffect(
+    () =>
+      registrarMedicion(
+        splitMapRef.current,
+        splitIsMeasuring,
+        splitIsMeasuringLine,
+        splitCurrentPoints,
+        splitCurrentLinePoints,
+        setSplitCurrentPoints,
+        setSplitCurrentLinePoints,
+      ),
+    [
+      splitIsMeasuring,
+      splitIsMeasuringLine,
+      splitCurrentPoints,
+      splitCurrentLinePoints,
+      registrarMedicion,
+      isSplitView,
+    ],
+  );
+
 
   // Icono para el botón de split view
   const getSplitIcon = (isOn: boolean) => {
@@ -2670,23 +2781,22 @@ const fixEncoding = (text: any): string => {
       >
         <div ref={containerRef} style={{ width: "100%", height: "100%" }} />
 
-        {/* Logo institucional */}
+        {/* Logo institucional, pegado a la esquina superior derecha */}
         <div
           style={{
             position: "absolute",
             top: 0,
-            left: "50%",
-            transform: "translateX(-50%)",
+            right: 0,
             zIndex: 25,
             background: "rgba(255, 255, 255, 0.55)",
             backdropFilter: "blur(12px)",
             WebkitBackdropFilter: "blur(12px)",
             border: "1px solid rgba(255, 255, 255, 0.6)",
-            borderRadius: "0 0 14px 14px",
-            padding: "2px 2px",
+            // Sólo se redondea la esquina interior
+            borderRadius: "0 0 0 14px",
+            // Sin ancho ni alto fijos: la caja se ajusta al logo (612 × 74 px)
+            padding: "10px 18px",
             boxShadow: "0 8px 20px rgba(97, 18, 50, 0.15)",
-            width: 200,
-            height: 60,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -2696,12 +2806,16 @@ const fixEncoding = (text: any): string => {
             src={`${process.env.PUBLIC_URL}/logo_SEGOB.png`}
             alt="SEGOB"
             style={{
-              maxWidth: "100%",
-              maxHeight: "100%",
+              display: "block",
+              height: 50,
+              width: "auto",
+              // En ventanas angostas se encoge sin deformarse
+              maxWidth: "45vw",
               objectFit: "contain",
             }}
           />
         </div>
+
 
         <div className="custom-popup-container">
           {routesData.map((route, idx) => {
@@ -2744,8 +2858,11 @@ const fixEncoding = (text: any): string => {
           })}
         </div>
 
-        {/* Controles del mapa principal */}
-        <div className="map-control-stack">
+        {/* Dock derecho: herramientas arriba, filtros de sedes debajo.
+            El modificador lo baja para no quedar bajo el logo. */}
+        <div className="map-right-dock map-right-dock--bajo-logo">
+          {/* Controles del mapa principal */}
+          <div className="map-control-stack">
           <button
             className={`map-control-button ${isSatellite ? "active" : ""}`}
             onClick={toggleSatellite}
@@ -2865,6 +2982,17 @@ const fixEncoding = (text: any): string => {
               className="button-icon"
             />
           </button>
+          </div>
+        </div>
+
+        {/* Debajo del InfoBox (izquierda): el offset lo publica App.tsx al
+            medir el alto real del InfoBox */}
+        <div className="sedes-panel-left-dock">
+          <SedesPanel
+            onFilteredChange={handleSedesFiltradas}
+            onResetView={verTodasLasSedes}
+            disabled={layersVisibility[SEDES_TOGGLE_ID] === false}
+          />
         </div>
 
         <div ref={minimapContainerRef} className="minimap-container" />
@@ -2913,8 +3041,49 @@ const fixEncoding = (text: any): string => {
             style={{ width: "100%", height: "100%" }}
           />
 
-          {/* Controles del mapa secundario (sin botón de split) */}
-          <div className="map-control-stack">
+          {/* Etiquetas de distancia del mapa secundario */}
+          <div className="custom-popup-container">
+            {splitRoutesData.map((route) => {
+              if (!splitMapRef.current) return null;
+              const sp = splitMapRef.current.project(route.endPoint);
+              return (
+                <div
+                  key={route.id}
+                  className="custom-route-popup"
+                  style={{ left: `${sp.x + 14}px`, top: `${sp.y - 8}px` }}
+                >
+                  <strong>Distancia:</strong> {route.distance} km
+                  <br />
+                  <strong>Tiempo:</strong> {route.duration}
+                </div>
+              );
+            })}
+            {splitLinesData.map((line) => {
+              if (!splitMapRef.current) return null;
+              const sp = splitMapRef.current.project(line.endPoint);
+              return (
+                <div
+                  key={`line-${line.id}`}
+                  className="custom-route-popup"
+                  style={{
+                    left: `${sp.x + 14}px`,
+                    top: `${sp.y - 8}px`,
+                    backgroundColor: "#ff6b35",
+                    color: "#ffffff",
+                  }}
+                >
+                  <strong>Distancia:</strong> {line.distance} km
+                  <br />
+                  <strong>Tipo:</strong> {line.duration}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Dock derecho propio del mapa secundario */}
+          <div className="map-right-dock">
+            {/* Controles del mapa secundario (sin botón de split) */}
+            <div className="map-control-stack">
             <button
               className={`map-control-button ${splitIsSatellite ? "active" : ""}`}
               onClick={toggleSplitSatellite}
@@ -3028,6 +3197,7 @@ const fixEncoding = (text: any): string => {
                 </g>
               </svg>
             </button>
+            </div>
           </div>
 
           {/* Minimapa del mapa secundario */}
@@ -3036,13 +3206,17 @@ const fixEncoding = (text: any): string => {
             className="minimap-container"
           />
 
-          {/* InfoBox del mapa secundario */}
+          {/* Sidebar propio del mapa secundario: InfoBox y, debajo, sus
+              propios filtros de sedes */}
           <div className="split-infobox-container">
             <InfoBox
-              title="Control de Capas"
+              title="Sedes de Asambleas y Mesas de Trabajo de la Ley General de los Pueblos Indígenas y Afromexicanos"
               sections={splitInfoBoxSections}
               onToggle={handleSplitLayerToggle}
-              initialOpen={false}
+            />
+            <SedesPanel
+              onFilteredChange={handleSedesFiltradasSplit}
+              onResetView={verTodasLasSedesSplit}
             />
           </div>
         </div>

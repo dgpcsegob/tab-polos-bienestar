@@ -10,14 +10,24 @@
   left: 12px;
   width: 332px;
   max-height: calc(100vh - 44px);
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.65);
+  /* Acrílico: el desenfoque y la saturación levantan el color del mapa que
+     queda debajo; el degradado y el filo interior dan el brillo del vidrio. */
+  /* Desenfoque moderado a propósito: con blur alto sobre un mapa base claro
+     todo lo de atrás se aplana y el panel parece opaco. Con 14px se siguen
+     reconociendo calles y manchas de color, que es lo que se lee como vidrio. */
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.32) 0%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
+  backdrop-filter: blur(14px) saturate(180%) contrast(104%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%) contrast(104%);
+  border: 1px solid rgba(255, 255, 255, 0.42);
   border-radius: 18px;
   box-shadow:
-    0 24px 48px -12px rgba(97, 18, 50, 0.28),
-    0 4px 12px rgba(15, 23, 42, 0.08);
+    0 24px 48px -12px rgba(97, 18, 50, 0.22),
+    0 4px 12px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -28,13 +38,85 @@
   opacity: 1;
   transition:
     transform .5s cubic-bezier(.22, .85, .25, 1),
-    opacity .35s ease;
+    opacity .35s ease,
+    border-color .45s ease;
 }
 
 .info-box.closed {
   pointer-events: none;
   transform: translateX(-130%);
   opacity: 0;
+}
+
+/* Con la vista satelital el fondo es oscuro e irregular: se reduce la
+   transparencia para que el texto no se pierda. La clase la pone el mapa. */
+body.mapa-satelital .info-box {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.88) 0%,
+    rgba(255, 255, 255, 0.8) 100%
+  );
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+body.mapa-satelital .info-header {
+  background: linear-gradient(
+    135deg,
+    rgba(155, 34, 71, 0.96) 0%,
+    rgba(122, 27, 60, 0.96) 55%,
+    rgba(97, 18, 50, 0.97) 100%
+  );
+}
+
+body.mapa-satelital .info-footer {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+/* ===========================
+   Lectura: el vidrio se vuelve sólido bajo el cursor
+   Los degradados no se interpolan, así que un transition sobre background
+   cambiaría de golpe. En su lugar se funde una capa sólida por encima:
+   la opacidad sí es animable. z-index -1 la deja sobre el fondo del panel
+   pero debajo de su contenido.
+   =========================== */
+.info-box::before,
+.info-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .45s cubic-bezier(.4, 0, .2, 1);
+}
+
+.info-box::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.98) 0%,
+    rgba(252, 250, 251, 0.98) 100%
+  );
+}
+
+.info-header::before {
+  background: linear-gradient(135deg, #9b2247 0%, #7a1b3c 55%, #611232 100%);
+}
+
+.info-box:hover::before,
+.info-box:hover .info-header::before {
+  opacity: 1;
+}
+
+.info-box:hover {
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+.info-box:hover .info-footer,
+body.mapa-satelital .info-box:hover .info-footer {
+  background: rgba(255, 255, 255, 0.75);
 }
 
 /* ===========================
@@ -45,10 +127,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 16px 16px 14px;
-  background: linear-gradient(135deg, #9b2247 0%, #7a1b3c 55%, #611232 100%);
+  padding: 11px 14px 10px;
+  /* Guinda translúcido para que el acrílico se lea también en el encabezado */
+  background: linear-gradient(
+    135deg,
+    rgba(155, 34, 71, 0.7) 0%,
+    rgba(122, 27, 60, 0.7) 55%,
+    rgba(97, 18, 50, 0.75) 100%
+  );
   position: relative;
   flex: none;
+  transition: background .25s ease;
 }
 
 /* Filo dorado institucional bajo el header */
@@ -59,27 +148,26 @@
   right: 0;
   bottom: 0;
   height: 3px;
-  background: linear-gradient(90deg, #a57f2c 0%, #d4b45a 50%, #a57f2c 100%);
 }
 
 .titles { min-width: 0; }
 
 .info-title {
   margin: 0;
-  font-size: 15.5px;
+  font-size: 16px;
   font-weight: 800;
   color: #ffffff;
   letter-spacing: .02em;
-  line-height: 1.3;
+  line-height: 1.25;
 }
 
 .info-subtitle {
-  margin: 4px 0 0;
-  font-size: 10px;
-  font-weight: 600;
+  margin: 2px 0 0;
+  font-size: 14px;
+  font-weight: 800;
   letter-spacing: .16em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.72);
+  color: rgba(231, 223, 223, 0.72);
 }
 
 /* Botón de cerrar (chevron) */
@@ -87,9 +175,9 @@
   border: none;
   background: rgba(255, 255, 255, 0.16);
   color: #ffffff;
-  width: 30px;
-  height: 30px;
-  border-radius: 10px;
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -116,7 +204,7 @@
    Contenido
    =========================== */
 .info-content {
-  padding: 10px;
+  padding: 6px 8px;
   overflow-y: auto;
   flex: 1;
   scrollbar-width: thin;
@@ -144,12 +232,12 @@
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   background: transparent;
   border: none;
   cursor: pointer;
-  padding: 9px 8px;
-  border-radius: 10px;
+  padding: 6px 8px;
+  border-radius: 9px;
   font-family: inherit;
   transition: background .18s ease;
 }
@@ -157,7 +245,7 @@
 
 .legend-accent {
   width: 4px;
-  height: 15px;
+  height: 13px;
   border-radius: 2px;
   background: linear-gradient(180deg, #9b2247, #a57f2c);
   flex: none;
@@ -168,22 +256,24 @@
   text-align: left;
   font-size: 11px;
   font-weight: 700;
-  letter-spacing: .08em;
+  letter-spacing: .07em;
   text-transform: uppercase;
   color: #611232;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* pre-line respeta los \n de los títulos y deja que los largos bajen de
+     renglón, en vez de recortarlos con puntos suspensivos */
+  white-space: pre-line;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .legend-badge {
-  min-width: 18px;
-  height: 18px;
+  min-width: 16px;
+  height: 16px;
   padding: 0 5px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: #9b2247;
   color: #ffffff;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 700;
   display: grid;
   place-items: center;
@@ -222,12 +312,12 @@
    =========================== */
 .legend-row {
   display: grid;
-  grid-template-columns: 16px 1fr auto;
+  grid-template-columns: 14px 1fr auto;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  margin: 1px 4px;
-  border-radius: 10px;
+  gap: 8px;
+  padding: 4px 8px;
+  margin: 0 4px;
+  border-radius: 9px;
   transition: background .18s ease;
 }
 .legend-row:hover { background: rgba(165, 127, 44, 0.1); }
@@ -241,7 +331,7 @@
 }
 
 .legend-label {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   color: #1f2937;
   white-space: nowrap;
@@ -250,8 +340,8 @@
 }
 
 .shape {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 3px;
   box-shadow:
     0 0 0 3px rgba(155, 34, 71, 0.1),
@@ -267,13 +357,14 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
+  padding: 7px 14px;
   border-top: 1px solid rgba(165, 127, 44, 0.3);
-  background: rgba(255, 255, 255, 0.5);
-  font-size: 11px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 10.5px;
   font-weight: 500;
   color: #6b7280;
   flex: none;
+  transition: background .45s ease;
 }
 
 .footer-dot {
@@ -336,8 +427,8 @@
   --pt-shadow-dark: rgba(163, 169, 188, 0.5);
   --pt-shadow-light: rgba(255, 255, 255, 0.95);
 
-  width: 30px;
-  height: 30px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: none;
   padding: 0;
@@ -363,8 +454,8 @@
 
 /* Tapa interior elevada */
 .power-cap {
-  width: 21px;
-  height: 21px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
   background: linear-gradient(145deg, #ffffff, #e9e9ef);
   box-shadow:
@@ -385,16 +476,16 @@
 
 /* Iconos de estado: O encendido · | apagado */
 .power-icon.circle {
-  width: 8px;
-  height: 8px;
+  width: 6.5px;
+  height: 6.5px;
   border: 1.5px solid #b3b8c4;
   border-radius: 50%;
   box-sizing: border-box;
 }
 
 .power-icon.bar {
-  width: 3px;
-  height: 9px;
+  width: 2.5px;
+  height: 7px;
   border-radius: 1.5px;
   background: #b3b8c4;
 }

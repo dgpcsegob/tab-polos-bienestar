@@ -87,6 +87,68 @@
    Botones de control del mapa
    Barra flotante con vidrio esmerilado
    =========================== */
+/* Columna derecha: herramientas arriba, panel de filtros debajo */
+.map-right-dock {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  max-height: calc(100% - 40px);
+  pointer-events: none;
+}
+
+.map-right-dock > * {
+  pointer-events: auto;
+}
+
+/* El mapa principal lleva el logo SEGOB en esa esquina: el dock arranca debajo.
+   El de la vista dividida no lo necesita y se queda arriba. */
+.map-right-dock--bajo-logo {
+  top: 92px;
+  max-height: calc(100% - 112px);
+}
+
+/* Dentro del dock la barra fluye en la columna, no se posiciona sola */
+.map-right-dock .map-control-stack {
+  position: static;
+  top: auto;
+  right: auto;
+  flex: none;
+}
+
+/* En pantallas bajas se encoge el panel, no la barra de herramientas */
+.map-right-dock .sedes-panel {
+  min-height: 0;
+}
+
+/* ===========================
+   Panel de sedes (izquierda), debajo del InfoBox
+   El top lo publica App.tsx como --left-dock-top, midiendo el alto real del
+   InfoBox (cambia con el acordeón y con abrir/cerrar el panel). El bottom fijo
+   es el límite: el panel usa su alto natural (no se estira a fuerza hasta
+   abajo) y sólo se encoge -con scroll interno- si no alcanza el espacio.
+   =========================== */
+.sedes-panel-left-dock {
+  position: fixed;
+  left: 12px;
+  top: var(--left-dock-top, 340px);
+  bottom: 10px;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: top .2s ease;
+}
+
+.sedes-panel-left-dock .sedes-panel {
+  max-height: 100%;
+  min-height: 0;
+}
+
 .map-control-stack {
   position: absolute;
   top: 20px;
@@ -263,7 +325,7 @@
 .minimap-container {
   position: absolute;
   bottom: 20px;
-  left: 20px;
+  right: 20px;
   width: 200px;
   height: 150px;
   border: 2px solid rgba(255, 255, 255, 0.9);
@@ -312,22 +374,229 @@
 }
 
 /* ===========================
+   Mosaico del tooltip
+   Varias fichas cuando el cursor cae sobre elementos encimados
+   =========================== */
+.tt-mosaico {
+  display: grid;
+  gap: 10px;
+  /* Ancho fijo de tarjeta: una sola o en mosaico se ven idénticas. A partir
+     de dos crece a lo ancho, no en una tira vertical. */
+  grid-template-columns: 288px;
+  max-width: 288px;
+}
+
+.tt-mosaico[data-n="2"],
+.tt-mosaico[data-n="3"],
+.tt-mosaico[data-n="4"] {
+  grid-template-columns: repeat(2, 288px);
+  max-width: 586px;
+}
+
+/* Cada elemento es una tarjeta suelta: el popup sólo las acomoda */
+.tt-item {
+  min-width: 0;
+  padding: 9px 12px 9px 11px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.97) 0%, rgba(250, 248, 249, 0.97) 100%);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(155, 34, 71, 0.12);
+  /* El acento lo inyecta el mapa en línea; --sede-color vive dentro de la
+     ficha y no llega hasta aquí, que es su envoltorio */
+  border-left: 3px solid var(--tt-acento, #9b2247);
+  border-radius: 10px;
+  box-shadow:
+    0 8px 22px rgba(97, 18, 50, 0.16),
+    0 2px 6px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  font-size: 11px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* La ficha de sede ya trae su propio encabezado con ícono */
+.tt-item > .sede-card {
+  max-width: none;
+}
+
+/* La dirección es lo único que puede alargar la tarjeta: se recorta a tres
+   renglones para que todas queden a una altura pareja */
+.tt-item .sede-dato:last-child > span:last-child {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tt-item-tipo {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: #9b2247;
+  margin-bottom: 3px;
+}
+
+/* Aviso cuando hay más elementos de los que caben */
+.tt-mas {
+  grid-column: 1 / -1;
+  justify-self: center;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(97, 18, 50, 0.9);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(97, 18, 50, 0.25);
+}
+
+/* ===========================
+   Ficha de Sedes LGPI
+   Minimalista: tipo de reunión con ícono + 4 datos
+   =========================== */
+.sede-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 260px;
+  font-family: 'Montserrat', system-ui, sans-serif;
+  color: #3b2430;
+  border-left: 0;
+}
+
+.sede-tipo {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--sede-color, #9b2247);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  margin-bottom: 1px;
+}
+
+.sede-tipo svg {
+  flex: none;
+}
+
+.sede-municipio {
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: #611232;
+}
+
+.sede-entidad {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8a6b78;
+  margin-bottom: 3px;
+}
+
+/* === Mesas de trabajo: paleta propia. Las asambleas conservan la de origen === */
+.sede-card--mesa .sede-municipio {
+  color: #002f2a;
+}
+
+.sede-card--mesa .sede-entidad {
+  color: var(--sede-color, #1e5b4f);
+  font-weight: 700;
+}
+
+.sede-dato {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #4a3340;
+}
+
+.sede-dato .sede-ico {
+  flex: none;
+  display: flex;
+  margin-top: 1px;
+  color: var(--sede-color, #9b2247);
+  opacity: .75;
+}
+
+/* La ficha fija que abre el click sí acepta cursor (la de hover no) */
+.ml-popup-sede .maplibregl-popup-content {
+  padding: 12px 14px 12px 15px;
+}
+
+/* Filo izquierdo por tipo de reunión, igual que en las asambleas. La clase la
+   pone MapLibre sobre el contenedor del popup: --sede-color se declara dentro
+   de la ficha y no llega hasta .maplibregl-popup-content, que dibuja el filo. */
+.ml-popup-mesa .maplibregl-popup-content {
+  border-left-color: #1e5b4f;
+}
+
+.ml-popup-sede .maplibregl-popup-close-button {
+  color: #9b2247;
+  font-size: 17px;
+  padding: 0 6px;
+  border-radius: 8px;
+}
+
+.sede-streetview {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 9px;
+  border: 1px solid rgba(97, 18, 50, 0.18);
+  background: linear-gradient(180deg, #ffffff 0%, #f6f2f3 100%);
+  color: #611232;
+  cursor: pointer;
+  font: 600 11px/1 'Montserrat', system-ui, sans-serif;
+  transition: transform .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.sede-streetview:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(160deg, #9b2247 0%, #611232 100%);
+  color: #ffffff;
+  box-shadow: 0 6px 14px rgba(97, 18, 50, 0.24);
+}
+
+/* ===========================
    InfoBox en split view
+   El SedesPanel del mapa secundario vive aquí también, debajo, apilado por
+   flex (ambos comparten este contenedor, a diferencia del principal que
+   necesita medir el alto del InfoBox por JS — ver --left-dock-top).
    =========================== */
 .split-infobox-container {
   position: absolute;
   top: 10px;
+  bottom: 10px;
   left: 0;
   z-index: 25;
   max-width: 280px;
-  overflow: visible;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.split-infobox-container .sedes-panel {
+  margin-left: 10px;
+  width: 260px;
+  /* No se estira a fuerza: usa su alto natural y sólo se encoge si falta espacio */
+  flex: 0 1 auto;
+  min-height: 0;
 }
 
 /* Sobreescribir position: fixed del InfoBox para que funcione dentro del split view */
 .split-infobox-container .info-box {
-  position: absolute !important;
-  top: 0 !important;
-  left: 10px !important;
+  position: static !important;
+  /* No se encoge: el que cede espacio cuando falta es el SedesPanel de abajo */
+  flex: 0 0 auto;
+  margin-left: 10px;
   width: 260px !important;
   max-height: calc(100vh - 100px);
   transform-origin: left center;
@@ -384,4 +653,18 @@
 
 .ml-popup, .ml-popup * {
   pointer-events: none !important;
+}
+
+/* El tooltip de hover no pinta caja propia: cada ficha del mosaico es su
+   propia tarjeta. La ficha fija del clic (.ml-popup-sede) sí la conserva. */
+.ml-popup .maplibregl-popup-content {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.ml-popup .maplibregl-popup-tip {
+  display: none;
 }

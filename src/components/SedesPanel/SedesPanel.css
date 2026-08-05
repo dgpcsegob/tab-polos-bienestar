@@ -1,0 +1,543 @@
+/* ===========================
+   Panel de filtros de Sedes LGPI
+   Vive en el dock derecho, bajo la barra de herramientas
+   =========================== */
+.sedes-panel {
+  width: 332px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px;
+  overflow: hidden;
+  /* Mismo acrílico que el sidebar: desenfoque alto, saturación y filo de vidrio */
+  /* Mismos valores que el sidebar: ver la nota sobre el desenfoque en
+     InfoBox.css — con blur alto el vidrio deja de percibirse */
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.32) 0%,
+    rgba(255, 255, 255, 0.18) 100%
+  );
+  backdrop-filter: blur(14px) saturate(180%) contrast(104%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%) contrast(104%);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow:
+    0 12px 32px rgba(97, 18, 50, 0.16),
+    0 2px 6px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  font-family: 'Montserrat', system-ui, sans-serif;
+  color: #3b2430;
+  pointer-events: auto;
+  /* position: relative para que la capa de fundido se ancle al panel */
+  position: relative;
+  transition:
+    opacity .2s ease,
+    border-color .45s ease;
+}
+
+.sedes-panel.disabled {
+  opacity: .45;
+  pointer-events: none;
+  filter: grayscale(.6);
+}
+
+/* Con la vista satelital el fondo es oscuro e irregular: se reduce la
+   transparencia para que el texto no se pierda. La clase la pone el mapa. */
+body.mapa-satelital .sedes-panel {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.88) 0%,
+    rgba(255, 255, 255, 0.8) 100%
+  );
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+body.mapa-satelital .sp-header {
+  background: linear-gradient(
+    160deg,
+    rgba(155, 34, 71, 0.96) 0%,
+    rgba(97, 18, 50, 0.97) 100%
+  );
+}
+
+/* ===========================
+   Lectura: el vidrio se vuelve sólido bajo el cursor
+   Los degradados no se interpolan, así que un transition sobre background
+   cambiaría de golpe. En su lugar se funde una capa sólida por encima:
+   la opacidad sí es animable. z-index -1 la deja sobre el fondo del panel
+   pero debajo de su contenido.
+   =========================== */
+.sedes-panel::before,
+.sp-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .45s cubic-bezier(.4, 0, .2, 1);
+}
+
+.sedes-panel::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.98) 0%,
+    rgba(252, 250, 251, 0.98) 100%
+  );
+}
+
+.sp-header::before {
+  background: linear-gradient(160deg, #9b2247 0%, #611232 100%);
+}
+
+.sedes-panel:hover::before,
+.sedes-panel:hover .sp-header::before {
+  opacity: 1;
+}
+
+.sedes-panel:hover {
+  border-color: rgba(255, 255, 255, 0.85);
+}
+
+/* Aparición al volver del botón flotante */
+@keyframes sp-entrada {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+.sedes-panel {
+  animation: sp-entrada .32s cubic-bezier(.22, .85, .25, 1);
+}
+
+/* ===========================
+   Botón flotante con el panel oculto
+   Espejo del botón de capas del sidebar
+   =========================== */
+.sp-reveal-btn {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #9b2247, #611232);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow:
+    0 8px 20px rgba(97, 18, 50, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform .2s ease, box-shadow .2s ease;
+  animation: sp-entrada .3s cubic-bezier(.22, .85, .25, 1);
+}
+
+.sp-reveal-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 26px rgba(97, 18, 50, 0.45);
+}
+
+/* Cuántos filtros quedaron activos mientras el panel está oculto */
+.sp-reveal-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #a57f2c;
+  color: #fff;
+  font: 700 10px/18px 'Montserrat', system-ui, sans-serif;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.25);
+}
+
+/* Botón de ocultar dentro del encabezado */
+.sp-hide {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background .2s ease, transform .2s ease;
+}
+
+/* Se separa del filo: pegado al borde, el redondeo del panel lo recortaba */
+.sp-hide {
+  margin-right: 20px;
+}
+
+/* El desplazamiento del hover va hacia adentro, no contra el borde */
+.sp-hide:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: translateX(-2px);
+}
+
+.sp-chev-izquierda {
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(225deg);
+}
+
+/* --- Encabezado --- */
+.sp-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 10px 10px 12px;
+  border: 0;
+  background: linear-gradient(
+    160deg,
+    rgba(155, 34, 71, 0.7) 0%,
+    rgba(97, 18, 50, 0.75) 100%
+  );
+  color: #ffffff;
+  text-align: left;
+  /* Ancla de la capa de fundido del encabezado */
+  position: relative;
+}
+
+.sp-header-icon {
+  display: flex;
+  opacity: .9;
+}
+
+.sp-header-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+  flex: 1;
+  min-width: 0;
+}
+
+.sp-header-text strong {
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+.sp-header-text em {
+  font-size: 10.5px;
+  font-style: normal;
+  opacity: .82;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Cuerpo colapsable --- */
+.sp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(52vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transition: max-height .3s cubic-bezier(.22, .85, .25, 1);
+}
+
+/* --- Grupos --- */
+.sp-group {
+  border-top: 1px solid rgba(155, 34, 71, 0.1);
+}
+
+.sp-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: 700 11px/1.2 'Montserrat', system-ui, sans-serif;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #611232;
+}
+
+.sp-group-header:hover {
+  background: rgba(155, 34, 71, 0.06);
+}
+
+.sp-group-title {
+  flex: 1;
+}
+
+.sp-group-body {
+  display: none;
+  padding: 0 8px 8px;
+}
+
+.sp-group.open .sp-group-body {
+  display: block;
+}
+
+.sp-badge {
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 10px/1 'Montserrat', system-ui, sans-serif;
+  background: rgba(155, 34, 71, 0.14);
+  color: #9b2247;
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-badge.solid {
+  background: rgba(255, 255, 255, 0.9);
+  color: #611232;
+}
+
+.sp-chevron {
+  width: 7px;
+  height: 7px;
+  border-right: 1.8px solid currentColor;
+  border-bottom: 1.8px solid currentColor;
+  transform: rotate(-45deg);
+  opacity: .6;
+  transition: transform .22s ease;
+}
+
+.sp-chevron.open {
+  transform: rotate(45deg);
+}
+
+/* --- Opciones --- */
+.sp-options {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sp-scroll {
+  max-height: 190px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.sp-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: 500 11.5px/1.25 'Montserrat', system-ui, sans-serif;
+  color: #3b2430;
+  transition: background .15s ease;
+}
+
+.sp-option:hover {
+  background: rgba(155, 34, 71, 0.07);
+}
+
+.sp-option.active {
+  background: rgba(155, 34, 71, 0.12);
+  color: #611232;
+  font-weight: 600;
+}
+
+.sp-check {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(97, 18, 50, 0.35);
+  background: rgba(255, 255, 255, 0.75);
+  position: relative;
+}
+
+.sp-option.active .sp-check {
+  background: #9b2247;
+  border-color: #9b2247;
+}
+
+.sp-option.active .sp-check::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 6.5px;
+  border-right: 2px solid #ffffff;
+  border-bottom: 2px solid #ffffff;
+  transform: rotate(45deg);
+}
+
+.sp-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-count {
+  flex: none;
+  font: 600 10px/1 'Montserrat', system-ui, sans-serif;
+  color: #8a6b78;
+  font-variant-numeric: tabular-nums;
+}
+
+.sp-tipo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sp-tipo-icon {
+  display: flex;
+  flex: none;
+}
+
+/* --- Fechas por mes --- */
+.sp-month + .sp-month {
+  margin-top: 6px;
+}
+
+.sp-month-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+
+.sp-month-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  padding: 4px 4px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: 600 11px/1.2 'Montserrat', system-ui, sans-serif;
+  color: #611232;
+  text-align: left;
+}
+
+.sp-month-all {
+  border: 0;
+  background: rgba(155, 34, 71, 0.1);
+  color: #9b2247;
+  border-radius: 7px;
+  padding: 3px 7px;
+  cursor: pointer;
+  font: 600 9.5px/1 'Montserrat', system-ui, sans-serif;
+  letter-spacing: .03em;
+  text-transform: uppercase;
+}
+
+.sp-month-all:hover {
+  background: rgba(155, 34, 71, 0.18);
+}
+
+.sp-month-all.active {
+  background: #9b2247;
+  color: #ffffff;
+}
+
+.sp-days {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px 4px 2px;
+}
+
+.sp-month.open .sp-days {
+  display: flex;
+}
+
+.sp-day {
+  width: 30px;
+  height: 27px;
+  border-radius: 8px;
+  border: 1px solid rgba(97, 18, 50, 0.14);
+  background: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  font: 600 11px/1 'Montserrat', system-ui, sans-serif;
+  color: #611232;
+  font-variant-numeric: tabular-nums;
+  transition: transform .14s ease, background .14s ease;
+}
+
+.sp-day:hover {
+  transform: translateY(-1px);
+  border-color: rgba(155, 34, 71, 0.4);
+}
+
+.sp-day.active {
+  background: linear-gradient(160deg, #9b2247 0%, #611232 100%);
+  border-color: #611232;
+  color: #ffffff;
+}
+
+/* --- Pie --- */
+.sp-footer {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid rgba(155, 34, 71, 0.1);
+}
+
+.sp-action {
+  flex: 1;
+  padding: 7px 8px;
+  border-radius: 10px;
+  border: 1px solid rgba(97, 18, 50, 0.18);
+  background: linear-gradient(180deg, #ffffff 0%, #f6f2f3 100%);
+  color: #611232;
+  cursor: pointer;
+  font: 600 11px/1 'Montserrat', system-ui, sans-serif;
+  transition: transform .16s ease, box-shadow .16s ease;
+}
+
+.sp-action:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(97, 18, 50, 0.16);
+}
+
+.sp-action:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.sp-action.ghost {
+  background: transparent;
+  color: #8a6b78;
+}
+
+/* Barras de scroll discretas */
+.sp-body::-webkit-scrollbar,
+.sp-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sp-body::-webkit-scrollbar-thumb,
+.sp-scroll::-webkit-scrollbar-thumb {
+  background: rgba(155, 34, 71, 0.28);
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sedes-panel *,
+  .sp-body {
+    transition: none !important;
+  }
+}

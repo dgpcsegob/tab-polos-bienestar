@@ -45,13 +45,13 @@ const PowerToggle: React.FC<{
   </button>
 );
 
-const InfoBox: React.FC<InfoBoxProps> = ({
+const InfoBox = React.forwardRef<HTMLElement, InfoBoxProps>(({
   title,
   subtitle,
   sections,
   onToggle,
   initialOpen = true,
-}) => {
+}, ref) => {
   const [open, setOpen] = useState(initialOpen);
   const [collapsed, setCollapsed] = useState<Record<number, boolean>>({});
 
@@ -92,11 +92,15 @@ const InfoBox: React.FC<InfoBoxProps> = ({
         </button>
       )}
 
-      <aside className={`info-box ${open ? 'open' : 'closed'}`} aria-hidden={!open}>
+      <aside
+        ref={ref}
+        className={`info-box ${open ? 'open' : 'closed'}`}
+        aria-hidden={!open}
+      >
         <header className="info-header">
           <div className="titles">
             <h2 className="info-title">{title}</h2>
-            <p className="info-subtitle">{subtitle ?? 'Secretaría de Gobernación'}</p>
+            <p className="info-subtitle">{subtitle ?? 'D G P C'}</p>
           </div>
 
           <button
@@ -182,6 +186,6 @@ const InfoBox: React.FC<InfoBoxProps> = ({
       </aside>
     </>
   );
-};
+});
 
 export default InfoBox;
