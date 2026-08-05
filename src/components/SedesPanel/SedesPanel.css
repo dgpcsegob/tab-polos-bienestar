@@ -3,7 +3,7 @@
    Vive en el dock derecho, bajo la barra de herramientas
    =========================== */
 .sedes-panel {
-  width: 332px;
+  width: 315px;
   display: flex;
   flex-direction: column;
   border-radius: 18px;
