@@ -8,7 +8,7 @@
   position: fixed;
   top: 12px;
   left: 12px;
-  width: 315px;
+  width: 310px;
   max-height: calc(100vh - 44px);
   /* Acrílico: el desenfoque y la saturación levantan el color del mapa que
      queda debajo; el degradado y el filo interior dan el brillo del vidrio. */

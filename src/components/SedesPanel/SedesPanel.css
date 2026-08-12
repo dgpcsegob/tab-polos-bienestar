@@ -3,7 +3,7 @@
    Vive en el dock derecho, bajo la barra de herramientas
    =========================== */
 .sedes-panel {
-  width: 315px;
+  width: 310px;
   display: flex;
   flex-direction: column;
   border-radius: 18px;
@@ -486,6 +486,58 @@ body.mapa-satelital .sp-header {
   background: linear-gradient(160deg, #9b2247 0%, #611232 100%);
   border-color: #611232;
   color: #ffffff;
+}
+
+/* --- Semanas dentro de un mes (agosto/septiembre) --- */
+.sp-weeks {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 4px 2px;
+}
+
+.sp-month.open .sp-weeks {
+  display: flex;
+}
+
+.sp-week + .sp-week {
+  border-top: 1px dashed rgba(155, 34, 71, 0.12);
+}
+
+.sp-week-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.sp-week-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  padding: 4px 4px 4px 10px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: 600 10.5px/1.2 'Montserrat', system-ui, sans-serif;
+  color: #8a6b78;
+  text-align: left;
+}
+
+.sp-week-toggle:hover {
+  color: #611232;
+}
+
+.sp-week-days {
+  display: none;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 4px 6px 10px;
+}
+
+.sp-week.open .sp-week-days {
+  display: flex;
 }
 
 /* --- Pie --- */

@@ -50,6 +50,42 @@ const diaDe = (iso: string) => Number(iso.slice(8, 10));
 
 const porTexto = (a: string, b: string) => a.localeCompare(b, "es");
 
+// Agosto y septiembre traen demasiadas fechas para una sola cuadrícula plana;
+// el resto de los meses se queda como está.
+const esMesConSemanas = (ym: string) => {
+  const mes = ym.slice(5, 7);
+  return mes === "08" || mes === "09";
+};
+
+// Número de semana ISO 8601 (lunes a domingo) de una fecha
+const semanaISO = (iso: string): number => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const diaSemana = d.getUTCDay() || 7; // domingo (0) pasa a 7
+  d.setUTCDate(d.getUTCDate() + 4 - diaSemana);
+  const inicioAno = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  return Math.ceil((((d.getTime() - inicioAno.getTime()) / 86400000) + 1) / 7);
+};
+
+/** Agrupa las fechas de un mes por semana ISO, en orden */
+const agruparPorSemana = (dias: Opcion[]): Array<[string, Opcion[]]> => {
+  const porSemana: Record<string, Opcion[]> = {};
+  dias.forEach((d) => {
+    const clave = `${d.valor.slice(0, 4)}-W${String(semanaISO(d.valor)).padStart(2, "0")}`;
+    (porSemana[clave] = porSemana[clave] ?? []).push(d);
+  });
+  return Object.keys(porSemana)
+    .sort()
+    .map((clave) => [clave, porSemana[clave]]);
+};
+
+/** "Del 7 al 9" o "Día 7" si la semana trae un solo día */
+const etiquetaSemana = (dias: Opcion[]): string => {
+  const numeros = dias.map((d) => diaDe(d.valor)).sort((a, b) => a - b);
+  const min = numeros[0];
+  const max = numeros[numeros.length - 1];
+  return min === max ? `Día ${min}` : `Del ${min} al ${max}`;
+};
+
 /** Valor disponible en un filtro y cuántas sedes tiene */
 type Opcion = { valor: string; n: number };
 
@@ -125,6 +161,8 @@ const SedesPanel: React.FC<SedesPanelProps> = ({
   // Todo arranca compactado: sólo se ven los encabezados de los cuatro filtros
   const [grupoAbierto, setGrupoAbierto] = useState<Record<string, boolean>>({});
   const [mesAbierto, setMesAbierto] = useState<Record<string, boolean>>({});
+  // Clave: `${mes}__${semana}`, para no chocar entre meses
+  const [semanaAbierta, setSemanaAbierta] = useState<Record<string, boolean>>({});
 
   const toggleGrupo = (id: string) =>
     setGrupoAbierto((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -331,18 +369,91 @@ const SedesPanel: React.FC<SedesPanelProps> = ({
                       {mesCompleto ? "Ninguno" : "Todo"}
                     </button>
                   </div>
-                  <div className="sp-days">
-                    {dias.map((d) => (
-                      <button
-                        key={d.valor}
-                        className={`sp-day ${filtros.fechas.includes(d.valor) ? "active" : ""}`}
-                        onClick={() => alternar("fechas", d.valor)}
-                        title={`${d.valor.split("-").reverse().join("/")} · ${d.n} sede${d.n > 1 ? "s" : ""}`}
-                      >
-                        {diaDe(d.valor)}
-                      </button>
-                    ))}
-                  </div>
+                  {esMesConSemanas(ym) ? (
+                    <div className="sp-weeks">
+                      {agruparPorSemana(dias).map(([claveSemana, diasSemana]) => {
+                        const claveEstado = `${ym}__${claveSemana}`;
+                        const semanaVisible = semanaAbierta[claveEstado] ?? false;
+                        const enSemana = diasSemana.filter((d) =>
+                          filtros.fechas.includes(d.valor),
+                        ).length;
+                        const todosDeSemana = diasSemana.map((d) => d.valor);
+                        const semanaCompleta =
+                          enSemana === diasSemana.length && diasSemana.length > 0;
+                        return (
+                          <div
+                            className={`sp-week ${semanaVisible ? "open" : ""}`}
+                            key={claveSemana}
+                          >
+                            <div className="sp-week-head">
+                              <button
+                                className="sp-week-toggle"
+                                onClick={() =>
+                                  setSemanaAbierta((p) => ({
+                                    ...p,
+                                    [claveEstado]: !semanaVisible,
+                                  }))
+                                }
+                                aria-expanded={semanaVisible}
+                              >
+                                <Chevron abierto={semanaVisible} />
+                                <span>{etiquetaSemana(diasSemana)}</span>
+                              </button>
+                              <button
+                                className={`sp-month-all ${semanaCompleta ? "active" : ""}`}
+                                onClick={() =>
+                                  setFiltros((prev) => ({
+                                    ...prev,
+                                    fechas: semanaCompleta
+                                      ? prev.fechas.filter(
+                                          (f) => !todosDeSemana.includes(f),
+                                        )
+                                      : prev.fechas.concat(
+                                          todosDeSemana.filter(
+                                            (f) => !prev.fechas.includes(f),
+                                          ),
+                                        ),
+                                  }))
+                                }
+                                title={
+                                  semanaCompleta
+                                    ? "Quitar la semana"
+                                    : "Seleccionar toda la semana"
+                                }
+                              >
+                                {semanaCompleta ? "Ninguno" : "Todo"}
+                              </button>
+                            </div>
+                            <div className="sp-week-days">
+                              {diasSemana.map((d) => (
+                                <button
+                                  key={d.valor}
+                                  className={`sp-day ${filtros.fechas.includes(d.valor) ? "active" : ""}`}
+                                  onClick={() => alternar("fechas", d.valor)}
+                                  title={`${d.valor.split("-").reverse().join("/")} · ${d.n} sede${d.n > 1 ? "s" : ""}`}
+                                >
+                                  {diaDe(d.valor)}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="sp-days">
+                      {dias.map((d) => (
+                        <button
+                          key={d.valor}
+                          className={`sp-day ${filtros.fechas.includes(d.valor) ? "active" : ""}`}
+                          onClick={() => alternar("fechas", d.valor)}
+                          title={`${d.valor.split("-").reverse().join("/")} · ${d.n} sede${d.n > 1 ? "s" : ""}`}
+                        >
+                          {diaDe(d.valor)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             })}
